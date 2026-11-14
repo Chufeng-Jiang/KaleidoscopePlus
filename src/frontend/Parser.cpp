@@ -1,4 +1,4 @@
-#include "kaleidoscope/Parser.h"
+#include "kaleidoscope/frontend/Parser.h"
 #include <cctype>
 
 namespace kaleidoscope {
@@ -18,6 +18,19 @@ void Parser::synchronize() {
     while (CurTok != tok_eof && CurTok != ';' && CurTok != tok_def && CurTok != tok_extern &&
            CurTok != tok_global)
         getNextToken();
+}
+
+Type Parser::ParseOptionalType() {
+    if (CurTok != ':')
+        return Type::Double;
+    getNextToken();
+    if (CurTok != tok_type) {
+        LogError("Expected type: double, i32, or bool");
+        return Type::Error;
+    }
+    auto type = namedType(Lex.identifier());
+    getNextToken();
+    return type;
 }
 
 int Parser::GetTokPrecedence() {
@@ -46,7 +59,8 @@ std::unique_ptr<PrototypeAST> Parser::LogErrorP(const char *Str) {
 
 // numberexpr ::= number
 std::unique_ptr<ExprAST> Parser::ParseNumberExpr() {
-    auto Result = makeLocated<NumberExprAST>(Lex.location(), Lex.number());
+    auto Result = makeLocated<NumberExprAST>(Lex.location(), Lex.number(),
+                                             CurTok == tok_integer ? Type::I32 : Type::Double);
     getNextToken();
     return Result;
 }
@@ -73,8 +87,11 @@ std::unique_ptr<ExprAST> Parser::ParseIdentifierExpr() {
     getNextToken();
 
     // Variable
-    if (CurTok != '(')
+    if (CurTok != '(') {
+        if (namedType(IdName) != Type::Unknown)
+            return LogError("Expected '(' after conversion type");
         return makeLocated<VariableExprAST>(Loc, IdName);
+    }
 
     // Call
     getNextToken();
@@ -138,6 +155,9 @@ std::unique_ptr<ExprAST> Parser::ParseForExpr() {
     auto VariableLoc = Lex.location();
     std::string IdName = Lex.identifier();
     getNextToken();
+    auto bindingType = ParseOptionalType();
+    if (bindingType == Type::Error)
+        return nullptr;
     if (CurTok != '=')
         return LogError("expected '=' after for");
     getNextToken();
@@ -172,6 +192,7 @@ std::unique_ptr<ExprAST> Parser::ParseForExpr() {
     auto result = makeLocated<ForExprAST>(Loc, IdName, std::move(Start), std::move(End),
                                           std::move(Step), std::move(Body));
     result->setVariableLocation(VariableLoc);
+    result->setBindingType(bindingType);
     return result;
 }
 
@@ -183,6 +204,7 @@ std::unique_ptr<ExprAST> Parser::ParseVarExpr() {
 
     std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames;
     std::vector<SourceLocation> VariableLocations;
+    std::vector<Type> BindingTypes;
 
     if (CurTok != tok_identifier)
         return LogError("expected identifier after var");
@@ -192,6 +214,10 @@ std::unique_ptr<ExprAST> Parser::ParseVarExpr() {
         std::string Name = Lex.identifier();
         getNextToken();
 
+        auto bindingType = ParseOptionalType();
+        if (bindingType == Type::Error)
+            return nullptr;
+        BindingTypes.push_back(bindingType);
         std::unique_ptr<ExprAST> Init = nullptr;
         if (CurTok == '=') {
             getNextToken();
@@ -221,6 +247,7 @@ std::unique_ptr<ExprAST> Parser::ParseVarExpr() {
 
     auto result = makeLocated<VarExprAST>(Loc, std::move(VarNames), std::move(Body));
     result->setVariableLocations(std::move(VariableLocations));
+    result->setBindingTypes(std::move(BindingTypes));
     return result;
 }
 
@@ -238,9 +265,18 @@ std::unique_ptr<ExprAST> Parser::ParsePrimary() {
     case tok_invalid:
         return LogError("Invalid numeric literal");
     case tok_identifier:
+    case tok_type:
         return ParseIdentifierExpr();
     case tok_number:
+    case tok_integer:
         return ParseNumberExpr();
+    case tok_true:
+    case tok_false: {
+        auto result =
+            makeLocated<NumberExprAST>(Lex.location(), CurTok == tok_true ? 1 : 0, Type::Bool);
+        getNextToken();
+        return result;
+    }
     case '(':
         return ParseParenExpr();
     case tok_if:
@@ -264,6 +300,13 @@ std::unique_ptr<ExprAST> Parser::ParseUnary() {
     auto Loc = Lex.location();
     int Opc = CurTok;
     getNextToken();
+    // Fold signed integer literals, including the minimum i32 value.
+    if ((Opc == '-' || Opc == '+') && CurTok == tok_integer) {
+        auto result =
+            makeLocated<NumberExprAST>(Loc, Opc == '-' ? -Lex.number() : Lex.number(), Type::I32);
+        getNextToken();
+        return result;
+    }
     if (auto Operand = ParseUnary())
         return makeLocated<UnaryExprAST>(Loc, Opc, std::move(Operand));
 
@@ -357,20 +400,31 @@ std::unique_ptr<PrototypeAST> Parser::ParsePrototype() {
 
     std::vector<std::string> ArgNames;
     std::vector<SourceLocation> ArgLocations;
-    while (getNextToken() == tok_identifier) {
+    FunctionType signature;
+    getNextToken();
+    while (CurTok == tok_identifier) {
         ArgNames.push_back(Lex.identifier());
         ArgLocations.push_back(Lex.location());
+        getNextToken();
+        auto type = ParseOptionalType();
+        if (type == Type::Error)
+            return nullptr;
+        signature.Parameters.push_back(type);
     }
     if (CurTok != ')')
         return LogErrorP("Expected ')' in prototype");
 
     getNextToken();
 
+    signature.Result = ParseOptionalType();
+    if (signature.Result == Type::Error)
+        return nullptr;
     if (Kind && ArgNames.size() != Kind)
         return LogErrorP("Invalid number of operands for operator");
 
     auto result = makeLocated<PrototypeAST>(Loc, FnName, ArgNames, Kind != 0, BinaryPrecedence);
     result->setArgumentLocations(std::move(ArgLocations));
+    result->setSignature(std::move(signature));
     return result;
 }
 
@@ -414,6 +468,10 @@ std::unique_ptr<GlobalAST> Parser::ParseGlobal(bool external) {
     auto loc = Lex.location();
     std::string name = Lex.identifier();
     getNextToken();
+    auto valueType = ParseOptionalType();
+    if (valueType == Type::Error)
+        return nullptr;
+    auto initializerType = valueType;
     double initializer = 0.0;
     if (CurTok == '=') {
         if (external) {
@@ -421,14 +479,21 @@ std::unique_ptr<GlobalAST> Parser::ParseGlobal(bool external) {
             return nullptr;
         }
         getNextToken();
+        bool signedLiteral = CurTok == '-' || CurTok == '+';
         bool negative = CurTok == '-';
         if (CurTok == '-' || CurTok == '+')
             getNextToken();
-        if (CurTok != tok_number) {
-            LogError("Global initializer must be a numeric literal");
+        if (CurTok != tok_number && CurTok != tok_integer &&
+            (signedLiteral || (CurTok != tok_true && CurTok != tok_false))) {
+            LogError("Global initializer must be a numeric literal or boolean literal");
             return nullptr;
         }
-        initializer = negative ? -Lex.number() : Lex.number();
+        initializerType = CurTok == tok_integer                         ? Type::I32
+                          : (CurTok == tok_true || CurTok == tok_false) ? Type::Bool
+                                                                        : Type::Double;
+        initializer = initializerType == Type::Bool ? (CurTok == tok_true ? 1 : 0)
+                      : negative                    ? -Lex.number()
+                                                    : Lex.number();
         getNextToken();
     }
     if (CurTok != ';') {
@@ -437,7 +502,7 @@ std::unique_ptr<GlobalAST> Parser::ParseGlobal(bool external) {
     }
     // Leave the semicolon for the driver, so interactive declarations do not
     // wait for a token from the following line before taking effect.
-    return makeLocated<GlobalAST>(loc, name, initializer, external);
+    return makeLocated<GlobalAST>(loc, name, initializer, external, valueType, initializerType);
 }
 
 } // namespace kaleidoscope

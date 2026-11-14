@@ -27,7 +27,11 @@ enum Token {
     // var
     tok_var = -13,
     tok_global = -14,
-    tok_invalid = -15
+    tok_invalid = -15,
+    tok_integer = -16,
+    tok_true = -17,
+    tok_false = -18,
+    tok_type = -19
 };
 
 } // namespace kaleidoscope

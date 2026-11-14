@@ -1,4 +1,4 @@
-#include "kaleidoscope/SourceManager.h"
+#include "kaleidoscope/support/SourceManager.h"
 namespace kaleidoscope {
 void SourceManager::record(char ch) {
     if (ch == '\r')

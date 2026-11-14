@@ -1,6 +1,6 @@
 #pragma once
-#include "kaleidoscope/SourceLocation.h"
-#include "kaleidoscope/SourceManager.h"
+#include "kaleidoscope/support/SourceLocation.h"
+#include "kaleidoscope/support/SourceManager.h"
 #include <ostream>
 #include <string>
 #include <string_view>

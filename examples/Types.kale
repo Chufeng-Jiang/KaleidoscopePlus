@@ -1,0 +1,17 @@
+# Typed scalar values; omitted types remain double.
+global counter: i32 = -2i32;
+global enabled: bool = true;
+def increment(delta: i32): i32 counter = counter + delta;
+def less(a: i32 b: i32): bool a < b;
+def choose(flag: bool a: i32 b: i32): i32 if flag then a else b;
+def fibint(n: i32): i32 if n < 3i32 then 1i32 else fibint(n-1i32)+fibint(n-2i32);
+def toint(x): i32 i32(x);
+def truth(x): bool bool(x);
+def asdouble(x: i32) double(x);
+def toggled(flag: bool): bool !flag;
+def localtyped(x: i32 flag: bool): i32
+  var y: i32 = x+1i32, active: bool = flag in
+    if active then y else 0i32;
+def looptotal(n: i32): i32
+  var total: i32 = 0i32 in
+    i32((for i: i32 = 1i32, i<n in total=total+i) + double(total));

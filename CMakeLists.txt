@@ -7,19 +7,38 @@ if(LLVM_VERSION_MAJOR LESS 21)
     message(FATAL_ERROR "Kaleidoscope requires LLVM 21 or newer; set LLVM_DIR to its lib/cmake/llvm directory")
 endif()
 
-add_library(kaleidoscope_frontend src/Lexer.cpp src/Parser.cpp src/Diagnostics.cpp
-    src/SourceManager.cpp src/SemanticAnalyzer.cpp)
+add_library(kaleidoscope_frontend
+    src/frontend/Lexer.cpp
+    src/frontend/Parser.cpp
+    src/frontend/SemanticAnalyzer.cpp
+    src/support/Diagnostics.cpp
+    src/support/SourceManager.cpp
+)
 target_include_directories(kaleidoscope_frontend PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(kaleidoscope_frontend PUBLIC cxx_std_17)
 
-add_library(kaleidoscope_backend src/Codegen.cpp src/DebugInfo.cpp src/Driver.cpp src/KaleidoscopeJIT.cpp
-    src/CompilerOptions.cpp src/Optimizer.cpp src/Output.cpp src/Globals.cpp)
+add_library(kaleidoscope_backend
+    src/backend/llvm/Expressions.cpp
+    src/backend/llvm/ControlFlow.cpp
+    src/backend/llvm/Functions.cpp
+    src/backend/llvm/Module.cpp
+    src/backend/llvm/Variables.cpp
+    src/backend/llvm/Types.cpp
+    src/backend/llvm/DebugInfo.cpp
+    src/backend/llvm/Optimizer.cpp
+    src/backend/llvm/Output.cpp
+    src/backend/llvm/KaleidoscopeJIT.cpp
+    src/driver/Driver.cpp
+    src/driver/CompilerOptions.cpp
+)
+# Internal headers are private; consumers use include/kaleidoscope only.
+target_include_directories(kaleidoscope_backend PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(kaleidoscope_backend SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
 separate_arguments(KALEIDOSCOPE_LLVM_DEFINITIONS NATIVE_COMMAND "${LLVM_DEFINITIONS}")
 target_compile_options(kaleidoscope_backend PRIVATE ${KALEIDOSCOPE_LLVM_DEFINITIONS})
 target_link_libraries(kaleidoscope_backend PUBLIC kaleidoscope_frontend PRIVATE LLVM)
 
-add_executable(kale src/main.cpp src/Runtime.cpp)
+add_executable(kale src/main.cpp src/runtime/Runtime.cpp)
 target_link_libraries(kale PRIVATE kaleidoscope_backend)
 set_target_properties(kale PROPERTIES ENABLE_EXPORTS ON)
 
@@ -97,4 +116,23 @@ if(BUILD_TESTING)
     add_test(NAME semantic_analysis COMMAND semantic_test)
     add_test(NAME diagnostics_recovery
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/diagnostics_test.py $<TARGET_FILE:kale>)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(types_test tests/types_test.cpp)
+    target_link_libraries(types_test PRIVATE kaleidoscope_frontend)
+    add_test(NAME type_analysis COMMAND types_test)
+endif()
+
+if(BUILD_TESTING)
+    add_test(NAME typed_language
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/typed_language_test.py
+                $<TARGET_FILE:kale> ${CMAKE_CXX_COMPILER} ${CMAKE_CURRENT_SOURCE_DIR}
+                ${KALEIDOSCOPE_GLOBAL_TEST_ARGS})
+    if(KALEIDOSCOPE_LLDB AND KALEIDOSCOPE_DWARFDUMP)
+        add_test(NAME typed_debugger
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/typed_language_test.py
+                    $<TARGET_FILE:kale> ${CMAKE_CXX_COMPILER} ${CMAKE_CURRENT_SOURCE_DIR}
+                    --debugger-only --lldb ${KALEIDOSCOPE_LLDB} --dwarf ${KALEIDOSCOPE_DWARFDUMP})
+    endif()
 endif()

@@ -1,4 +1,4 @@
-#include "kaleidoscope/Parser.h"
+#include "kaleidoscope/frontend/Parser.h"
 #include <iostream>
 #include <sstream>
 #include <stdexcept>

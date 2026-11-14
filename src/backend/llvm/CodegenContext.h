@@ -1,15 +1,15 @@
 #pragma once
 #include "DebugInfo.h"
 #include "KaleidoscopeJIT.h"
-#include "kaleidoscope/AST.h"
-#include "kaleidoscope/Diagnostics.h"
+#include "kaleidoscope/frontend/AST.h"
+#include "kaleidoscope/support/Diagnostics.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Target/TargetMachine.h"
 #include <map>
 #include <memory>
-#include <set>
+
 #include <string>
 
 namespace kaleidoscope {
@@ -30,7 +30,7 @@ struct CodegenContext : ExprVisitor {
     std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
 
     // Lowering caches only: semantic validity/definitions belong to SemanticAnalyzer.
-    std::set<std::string> GlobalNames;
+    std::map<std::string, Type> GlobalTypes;
     bool FileMode = false;
     bool EmitDebugInfo = false;
     unsigned Optimization = 2;
@@ -61,11 +61,16 @@ struct CodegenContext : ExprVisitor {
     };
     std::unique_ptr<TargetMachine> TheTM;
 
+    llvm::Type *lowerType(Type type);
+    Constant *scalarConstant(double value, Type type);
+    Value *convert(Value *value, Type destination);
+    Value *condition(Value *value);
+    Value *call(Function *function, ArrayRef<Value *> arguments, const Twine &name);
     Value *getVariableStorage(const std::string &name);
     GlobalVariable *generate(const GlobalAST &node);
     Value *LogErrorV(const char *message);
     Function *getFunction(std::string name);
-    AllocaInst *CreateEntryBlockAlloca(Function *function, StringRef name);
+    AllocaInst *CreateEntryBlockAlloca(Function *function, StringRef name, Type type);
     void initializeModule();
     Value *visit(NumberExprAST &node) override;
     Value *visit(VariableExprAST &node) override;

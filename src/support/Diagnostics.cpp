@@ -1,4 +1,4 @@
-#include "kaleidoscope/Diagnostics.h"
+#include "kaleidoscope/support/Diagnostics.h"
 #include <algorithm>
 namespace kaleidoscope {
 void Diagnostics::emit(std::string_view severity, std::string_view message,

@@ -1,5 +1,5 @@
-#include "kaleidoscope/Parser.h"
-#include "kaleidoscope/SemanticAnalyzer.h"
+#include "kaleidoscope/frontend/Parser.h"
+#include "kaleidoscope/frontend/SemanticAnalyzer.h"
 #include <iostream>
 #include <sstream>
 #include <stdexcept>

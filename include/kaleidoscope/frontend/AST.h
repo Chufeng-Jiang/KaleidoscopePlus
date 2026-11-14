@@ -1,5 +1,6 @@
 #pragma once
-#include "kaleidoscope/SourceLocation.h"
+#include "kaleidoscope/frontend/Type.h"
+#include "kaleidoscope/support/SourceLocation.h"
 #include <cassert>
 #include <memory>
 #include <string>
@@ -50,11 +51,15 @@ class ExprVisitor {
 };
 
 class ExprAST {
+    friend class SemanticAnalyzer;
     SourceLocation Location;
+    // Analysis metadata; the expression tree itself remains unchanged.
+    mutable Type InferredType = Type::Unknown;
 
   public:
     SourceLocation location() const { return Location; }
     void setLocation(SourceLocation loc) { Location = loc; }
+    Type type() const { return InferredType; }
     virtual ~ExprAST() = default;
     virtual const std::string *variableName() const { return nullptr; }
     virtual llvm::Value *accept(ExprVisitor &visitor) = 0;
@@ -65,9 +70,10 @@ class NumberExprAST : public ExprAST {
     friend struct CodegenContext;
     friend class SemanticAnalyzer;
     double Val;
+    Type LiteralType;
 
   public:
-    NumberExprAST(double Val) : Val(Val) {}
+    NumberExprAST(double Val, Type type = Type::Double) : Val(Val), LiteralType(type) {}
 
     llvm::Value *accept(ExprVisitor &visitor) override { return visitor.visit(*this); }
     void accept(ConstExprVisitor &visitor) const override { visitor.visit(*this); }
@@ -148,9 +154,11 @@ class ForExprAST : public ExprAST {
     friend class SemanticAnalyzer;
     std::string VarName;
     SourceLocation VariableLocation;
+    Type BindingType = Type::Double;
     std::unique_ptr<ExprAST> Start, End, Step, Body;
 
   public:
+    void setBindingType(Type type) { BindingType = type; }
     void setVariableLocation(SourceLocation loc) { VariableLocation = loc; }
     ForExprAST(const std::string &VarName, std::unique_ptr<ExprAST> Start,
                std::unique_ptr<ExprAST> End, std::unique_ptr<ExprAST> Step,
@@ -167,15 +175,18 @@ class VarExprAST : public ExprAST {
     friend class SemanticAnalyzer;
     std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames;
     std::vector<SourceLocation> VariableLocations;
+    std::vector<Type> BindingTypes;
     std::unique_ptr<ExprAST> Body;
 
   public:
+    void setBindingTypes(std::vector<Type> types) { BindingTypes = std::move(types); }
     void setVariableLocations(std::vector<SourceLocation> locations) {
         VariableLocations = std::move(locations);
     }
     VarExprAST(std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames,
                std::unique_ptr<ExprAST> Body)
-        : VarNames(std::move(VarNames)), Body(std::move(Body)) {}
+        : VarNames(std::move(VarNames)), BindingTypes(this->VarNames.size(), Type::Double),
+          Body(std::move(Body)) {}
 
     llvm::Value *accept(ExprVisitor &visitor) override { return visitor.visit(*this); }
     void accept(ConstExprVisitor &visitor) const override { visitor.visit(*this); }
@@ -190,12 +201,16 @@ class PrototypeAST {
     unsigned Precedence;
     SourceLocation Location;
     std::vector<SourceLocation> ArgumentLocations;
+    FunctionType Signature;
 
   public:
     PrototypeAST(const std::string &Name, std::vector<std::string> Args, bool IsOperator = false,
                  unsigned Prec = 0)
-        : Name(Name), Args(std::move(Args)), IsOperator(IsOperator), Precedence(Prec) {}
+        : Name(Name), Args(std::move(Args)), IsOperator(IsOperator), Precedence(Prec),
+          Signature{std::vector<Type>(this->Args.size(), Type::Double), Type::Double} {}
     const std::string &getName() const { return Name; }
+    const FunctionType &signature() const { return Signature; }
+    void setSignature(FunctionType signature) { Signature = std::move(signature); }
     bool isUnaryOp() const { return IsOperator && Args.size() == 1; }
     bool isBinaryOp() const { return IsOperator && Args.size() == 2; }
     char getOperatorName() const {
@@ -210,19 +225,24 @@ class PrototypeAST {
     unsigned getBinaryPrecedence() const { return Precedence; }
 };
 
-// A top-level mutable double definition, or a declaration supplied by another module.
+// A top-level mutable scalar definition, or a declaration supplied by another module.
 class GlobalAST {
     friend struct CodegenContext;
     friend class SemanticAnalyzer;
     std::string Name;
     double Initializer;
+    Type ValueType;
+    Type InitializerType;
     bool External;
     SourceLocation Location;
 
   public:
-    GlobalAST(std::string name, double initializer, bool external)
-        : Name(std::move(name)), Initializer(initializer), External(external) {}
+    GlobalAST(std::string name, double initializer, bool external, Type type = Type::Double,
+              Type initializerType = Type::Double)
+        : Name(std::move(name)), Initializer(initializer), ValueType(type),
+          InitializerType(initializerType), External(external) {}
     const std::string &getName() const { return Name; }
+    Type type() const { return ValueType; }
     double initializer() const { return Initializer; }
     bool isExternal() const { return External; }
     SourceLocation location() const { return Location; }
@@ -236,6 +256,7 @@ class FunctionAST {
     std::unique_ptr<ExprAST> Body;
 
   public:
+    const ExprAST &body() const { return *Body; }
     FunctionAST(std::unique_ptr<PrototypeAST> Proto, std::unique_ptr<ExprAST> Body)
         : Proto(std::move(Proto)), Body(std::move(Body)) {}
 };

@@ -1,8 +1,8 @@
 #pragma once
-#include "kaleidoscope/AST.h"
-#include "kaleidoscope/Diagnostics.h"
-#include "kaleidoscope/Lexer.h"
-#include "kaleidoscope/Operators.h"
+#include "kaleidoscope/frontend/AST.h"
+#include "kaleidoscope/frontend/Lexer.h"
+#include "kaleidoscope/frontend/Operators.h"
+#include "kaleidoscope/support/Diagnostics.h"
 namespace kaleidoscope {
 class Parser {
   public:
@@ -23,6 +23,7 @@ class Parser {
     OperatorTable &BinopPrecedence;
     int CurTok = tok_eof;
     int GetTokPrecedence();
+    Type ParseOptionalType();
     std::unique_ptr<ExprAST> ParseNumberExpr();
     std::unique_ptr<ExprAST> ParseParenExpr();
     std::unique_ptr<ExprAST> ParseIdentifierExpr();

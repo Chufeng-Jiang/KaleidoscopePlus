@@ -1,9 +1,9 @@
 #pragma once
-#include "kaleidoscope/AST.h"
-#include "kaleidoscope/Diagnostics.h"
-#include "kaleidoscope/Operators.h"
+#include "kaleidoscope/frontend/AST.h"
+#include "kaleidoscope/frontend/Operators.h"
+#include "kaleidoscope/support/Diagnostics.h"
 #include <map>
-#include <set>
+
 namespace kaleidoscope {
 // The authoritative language-level namespace. Contains no LLVM objects.
 class SemanticAnalyzer : private ConstExprVisitor {
@@ -21,19 +21,26 @@ class SemanticAnalyzer : private ConstExprVisitor {
   private:
     enum class Kind { Function, Global };
     struct Symbol {
-        Kind Type;
-        std::size_t Arity;
+        Kind Category;
+        FunctionType Signature;
+        Type ValueType = Type::Unknown;
         bool Defined;
         SourceLocation Location;
     };
     Diagnostics &Diag;
     OperatorTable &Operators;
     std::map<std::string, Symbol> Symbols;
-    std::vector<std::set<std::string>> Scopes;
+    std::vector<std::map<std::string, Type>> Scopes;
     const PrototypeAST *CurrentFunction = nullptr;
     bool checkPrototype(const PrototypeAST &prototype, bool definition, bool temporary = false);
-    bool variableExists(const std::string &name) const;
-    void checkCall(const std::string &name, std::size_t arity, SourceLocation location);
+    Type variableType(const std::string &name) const;
+    Type infer(const ExprAST &expression);
+    bool checkCondition(Type type, SourceLocation location);
+    bool checkLiteral(double value, Type type, SourceLocation location);
+    bool requireType(Type actual, Type expected, SourceLocation location,
+                     const std::string &context);
+    Type checkCall(const std::string &name, const std::vector<Type> &arguments,
+                   SourceLocation location);
     void previous(const Symbol &symbol);
     void visit(const NumberExprAST &node) override;
     void visit(const VariableExprAST &node) override;

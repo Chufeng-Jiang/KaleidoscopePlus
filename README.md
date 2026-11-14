@@ -5,41 +5,64 @@ A small LLVM-based compiler supporting interactive JIT execution and native obje
 ## Module Structure
 
 ```text
-include/kaleidoscope/  Public frontend interfaces and driver entry point
+include/kaleidoscope/                 Public interfaces; no LLVM implementation headers
+  Driver.h                           Compiler entry point
+  frontend/                          Token, Lexer, Parser, AST, Operators, Type, SemanticAnalyzer
+  support/                           SourceLocation, SourceManager, Diagnostics
 src/
-  SourceManager.cpp   Cached source lines for file and REPL diagnostics
-  SemanticAnalyzer.cpp Names, signatures, scopes, and declaration validation
-  Lexer.cpp           Input stream → tokens; each Lexer owns its cursor and token values
-  Parser.cpp          Recursive descent and operator precedence parsing → AST
-  Diagnostics.cpp     Per-session errors, source excerpts, carets, and declaration notes
-  CodegenContext.h    Internal backend state and AST visitor; not a public interface
-  Codegen.cpp         LLVM IR generation and module initialization
-  Globals.cpp         Global storage, external declarations, and local-first variable lookup
-  CompilerOptions.*  Command-line options and option compatibility checks
-  Optimizer.*        LLVM default module optimization pipelines and IR verification
-  Output.*           Textual IR/object emission with transactional file replacement
-  DebugInfo.*         DWARF compilation units, functions, lexical scopes, and variables
-  KaleidoscopeJIT.*   ORC JIT declarations and implementation (original LLVM license retained)
-  Driver.cpp          Input files, REPL, JIT/object emission, and session lifetime
-  Runtime.cpp         Exported printd / putchard runtime functions
-  main.cpp            Calls the driver entry point only
-examples/             Kaleidoscope programs and their C++ drivers
-tests/                Frontend isolation tests and end-to-end regression tests
+  main.cpp                           Calls the driver entry point only
+  frontend/                          Lexing, parsing, and semantic/type analysis
+  support/                           Cached source lines and located diagnostics
+  driver/
+    Driver.cpp                       File/REPL sessions and compilation orchestration
+    CompilerOptions.h/.cpp           Command-line parsing and option validation
+  backend/llvm/
+    CodegenContext.h                 Shared internal state and AST visitor declarations
+    Expressions.cpp                  Literals, unary/binary expressions, assignment, and calls
+    ControlFlow.cpp                  If/for generation and basic-block connections
+    Functions.cpp                    Function lookup, prototypes, definitions, and verification
+    Module.cpp                       LLVM context/module initialization and codegen diagnostics
+    Variables.cpp                    Stack allocation, variable lookup, local scopes, and globals
+    Types.cpp                        Scalar LLVM types, constants, conversions, and call ABI
+    DebugInfo.h/.cpp                 DWARF types, source locations, scopes, and variables
+    Optimizer.h/.cpp                 LLVM optimization pipelines and module verification
+    Output.h/.cpp                    Transactional LLVM IR and native object output
+    KaleidoscopeJIT.h/.cpp           ORC JIT (original LLVM license retained)
+  runtime/
+    Runtime.cpp                      Exported printd / putchard functions
+examples/                            Kaleidoscope programs and their C++ drivers
+tests/                               Frontend isolation and end-to-end regression tests
 ```
 
-`kaleidoscope_frontend` contains source management, the lexer, parser, semantic
-analysis, and diagnostics. It can be linked independently without LLVM headers or
-libraries. AST nodes own their children. `ConstExprVisitor` supports read-only
-frontend analysis; the backend uses `ExprVisitor`, which only forward-declares
-`llvm::Value` and includes no LLVM implementation.
+`.h/.cpp` denotes two files. Public headers live under `include/kaleidoscope`;
+private headers stay beside their implementations under `src`. Include public
+interfaces using their module path, for example `kaleidoscope/frontend/Parser.h`
+or `kaleidoscope/support/Diagnostics.h`. The old flat header paths have been removed.
 
-The backend owns the LLVM context, module, builder, lowering caches, and JIT in
-`CodegenContext`; optimization managers live within each optimizer invocation.
-There is no mutable file-scope global state.
-`Compiler` manages component lifetimes and explicitly shares the operator precedence
-table between the parser and semantic analyzer to preserve custom operator semantics.
-The semantic analyzer owns the language-level symbol table independently of LLVM.
-Runtime functions are compiled directly into the executable and exported for JIT lookup.
+The existing build targets remain unchanged:
+
+- `kaleidoscope_frontend` contains `frontend` and `support`. It can be linked
+  independently without LLVM headers or libraries.
+- `kaleidoscope_backend` contains the LLVM backend and compiler driver. Its `src`
+  include path and LLVM include paths are private.
+- `kale` contains `main.cpp` and the runtime functions, which are exported for JIT lookup.
+
+AST nodes own their children. `ConstExprVisitor` supports analysis without rewriting
+the tree; semantic analysis updates inferred type annotations. The backend uses
+`ExprVisitor`, which only forward-declares `llvm::Value` in the public interface.
+
+The code-generation files implement one shared `CodegenContext`; splitting them
+does not introduce a class or header per implementation file. It owns the LLVM
+context, module, builder, lowering caches, and JIT. Optimization managers live
+within each optimizer invocation. Loop binding lifetime remains with `for` in
+`ControlFlow.cpp`, while assignment remains in `Expressions.cpp`; both use variable
+storage helpers from `Variables.cpp`. Output belongs to the LLVM backend because
+it directly consumes LLVM modules and target machines.
+
+`Compiler` manages component lifetimes and shares the operator-precedence table
+between parser and semantic analyzer. The semantic analyzer owns language-level
+symbols independently of LLVM. There is no mutable file-scope global state.
+
 
 ## Building
 
@@ -89,7 +112,7 @@ Global variables are also supported as described below.
 
 ## Global Variables
 
-Global variables are mutable `double` values. Use `global` at the top level;
+Global variables are mutable scalar values, defaulting to `double`. Use `global` at the top level;
 a declaration must end with a semicolon:
 
 ```text
@@ -99,8 +122,10 @@ global untouched;
 extern global shared;
 ```
 
-An omitted initializer means zero. Initializers accept a single decimal numeric
-literal with an optional `+` or `-` sign, including `.5`, `2.`, and `-0`.
+An omitted initializer means the declared type's zero value (`false` for `bool`).
+Initializers accept a single literal matching the declared type: decimal `double`
+literals such as `.5`, `2.`, and `-0`; `i32` literals such as `-2i32`; or `true`/`false`.
+Numeric literals may have an optional `+` or `-` sign.
 Arithmetic expressions, function calls, and references to other variables are not
 allowed in an initializer; perform those computations through assignments instead.
 Malformed numeric literals such as `.` and `1.2.3`, and literals outside the
@@ -149,7 +174,8 @@ Globals use LLVM's [external-linkage global variables](https://llvm.org/docs/Lan
 A C++ consumer can declare a Kaleidoscope global as `extern "C" { extern double counter; }`.
 Conversely, a C++ definition such as `extern "C" { double shared = 4; }` can provide
 storage for `extern global shared;`. All participating declarations must agree on
-the `double` type; the compiler does not validate the ABI of a separately supplied object.
+the declared type (`double` by default); the compiler does not validate the ABI of a
+separately supplied object. See the typed example below for `std::int32_t` and `bool`.
 
 To inspect globals and distinguish them from shadowing locals, build with `-g`:
 
@@ -276,7 +302,8 @@ shadowed `y` (13), the loop variables (`y = 8`, `i = 1` on the first iteration),
 and the restored outer `y` (11). The program prints `debugdemo(3): 11`.
 
 The generated object contains standard DWARF 4 metadata for source files,
-functions, double types, parameters, global definitions, `var` declarations, and `for` variables.
+functions, scalar types (`double`, `i32`, `bool`), parameters, global definitions,
+`var` declarations, and `for` variables.
 Lexical scopes distinguish shadowed names. Source paths are recorded as an absolute
 directory plus filename, so keep the source files available to the debugger.
 The implementation follows LLVM's [source-level debugging model](https://llvm.org/docs/SourceLevelDebugging.html).
@@ -340,6 +367,112 @@ This reports the unknown variable and then evaluates the valid call to 42. The
 REPL retains its existing behavior of exiting with status 0 at EOF despite recoverable
 input errors; file compilation exits with status 1 when diagnostics contain errors.
 
+## Scalar Types and Explicit Conversions
+
+The language supports `double`, signed 32-bit `i32`, and `bool`. A missing type
+annotation always means `double`; it does not infer a declaration's type from its
+initializer. Existing examples retain their original numerical behavior. The names
+`double`, `i32`, `bool`, `true`, and `false` are now reserved words, and `:` introduces
+a type annotation.
+
+```text
+global count: i32 = 0i32;
+global ready: bool = true;
+extern global shared: i32;
+extern predicate(x: i32): bool;
+def add(a: i32 b: i32): i32 a+b;
+def choose(flag: bool x: i32 y: i32): i32 if flag then x else y;
+def local(x: i32): i32 var next: i32 = x+1i32 in next;
+```
+
+Prototype parameters remain space-separated; call arguments are comma-separated.
+Numeric literals without a suffix, including `1`, are `double`. Decimal integer
+literals use the `i32` suffix, including `0i32` and `-2147483648i32`; fractional or
+out-of-range integer literals are rejected. Boolean literals are `true` and `false`.
+Local declarations can omit an initializer, giving typed zero/false.
+
+Assignments, initializers, function arguments/results, and both branches of `if`
+require matching types. Repeated declarations must match the full signature,
+including parameter and return types. There is no implicit numeric conversion:
+
+```text
+def increment(x: i32): i32 x+1i32;   # Valid.
+def invalid(x: i32): i32 x+1;       # Error: expected i32, got double.
+increment(i32(3.9));                 # Explicit conversion; evaluates to 4.
+```
+
+| Operation | Behavior |
+| --- | --- |
+| `+`, `-`, `*` | Matching `double` or `i32` operands; boolean arithmetic is rejected |
+| `i32` overflow | Addition, subtraction, multiplication, and unary negation wrap modulo 2^32 |
+| `<` on `i32` | Signed comparison returning `bool` |
+| `<` on `double` | Preserves the original double 0/1 result, including its unordered NaN comparison behavior |
+| Conditions | Accept all three scalar types; zero/false and double NaN are false |
+| Unary `+`/`-` on `i32`, `!` on `bool` | Built in; other unary operations still use custom operator declarations |
+| `for i: i32 = ...` | Typed initializer and step; omitted step is typed one; boolean loop variables are rejected |
+| Loop result | Remains double zero, regardless of loop-variable type |
+
+Custom operators can also declare typed parameters/results, but are not overloaded
+by type. Built-in operations take precedence over custom operator definitions.
+
+Explicit conversions take exactly one argument:
+
+| Conversion | Behavior |
+| --- | --- |
+| `double(x)` | Signed integer to double; boolean to 0.0/1.0 |
+| `i32(x)` | Boolean to 0/1; double truncates toward zero and saturates to the i32 range; NaN becomes 0 |
+| `bool(x)` | Same nonzero test as conditions, including false for double NaN |
+| Same-type conversion | Leaves the value unchanged |
+
+Typed values work in both JIT and object mode. The REPL converts the final result
+to double for its existing `Evaluated to ...` display, so boolean results display
+as 0 or 1. Function bodies and stored variables retain their actual types.
+
+```bash
+printf 'def add(a: i32 b: i32): i32 a+b; add(20i32,22i32); !false;\n' | ./build/kale
+./build/kale -O2 examples/Types.kale -o build/types.o
+c++ examples/Types_Driver.cpp build/types.o -o build/types
+./build/types
+```
+
+The REPL prints results 42 and 1; the executable prints `Typed scalars: passed`.
+The driver checks recursion, globals, boolean arguments/results, conversions,
+integer overflow, and typed local/loop bindings. Use `std::int32_t` for `i32` and
+C++ `bool` for `bool` in `extern "C"` declarations. Native interoperability has
+been tested on x86-64 Linux; arbitrary external ABI compatibility is not inferred.
+
+Debug typed parameters, locals, and globals:
+
+```bash
+./build/kale -g examples/Types.kale -o build/types.o
+c++ -g -O0 examples/Types_Driver.cpp build/types.o -o build/types
+lldb-21 build/types
+```
+
+```text
+breakpoint set --file Types.kale --line 14
+run
+frame variable x flag y active
+target variable counter enabled
+```
+
+At the first stop, `x = 4`, `flag = true`, `y = 5`, `active = true`, global
+`counter = 3`, and `enabled = true`. LLDB may display `i32` as its C type alias `int`.
+DWARF records a signed 32-bit integer and a boolean type alongside double metadata.
+
+The frontend's `Type` and `FunctionType` remain independent of LLVM. Symbols carry
+value types or full function signatures. `ExprAST::type()` is `Unknown` before
+analysis, a scalar type after successful analysis, or `Error` after a failed
+expression. Error types suppress redundant diagnostics; annotations are recomputed
+on reanalysis. The backend maps checked types to LLVM `double`, `i32`, and `i1`
+and uses a double-returning wrapper for top-level expressions.
+
+```bash
+cmake --build build --parallel
+ctest --test-dir build -R 'type_analysis|typed_language|typed_debugger' --output-on-failure
+ctest --test-dir build --output-on-failure
+```
+
 ## Validation and Maintenance
 
 - `frontend_sessions` links only the frontend library and verifies state isolation
@@ -368,13 +501,20 @@ input errors; file compilation exits with status 1 when diagnostics contain erro
   and `llvm-dwarfdump` are available.
 - `semantic_analysis` links only the frontend and verifies name resolution, recursion,
   signatures, scopes, custom operators, independent sessions, and symbol commits.
+- `type_analysis` links only the frontend and checks signatures, every expression kind,
+  error propagation through bindings, and recomputation after an invalid name is resolved.
 - `diagnostics_recovery` checks multiple errors, source excerpts, tab-aligned carets,
   declaration notes, line endings, EOF diagnostics, REPL recovery, and output preservation.
+- `typed_language` checks all optimization levels, strict type errors, conversion boundaries,
+  integer overflow, typed operators, JIT state, native C++/cross-file ABI, and available IR/DWARF tools.
+- `typed_debugger` checks typed parameters, locals, and globals in LLDB when LLDB and
+  `llvm-dwarfdump` are available.
 - `.clang-format` standardizes C++ formatting. Add syntax in Token/Parser/AST,
   add semantic rules in SemanticAnalyzer and IR generation in the backend visitor, and keep command-line
   workflows in Driver to avoid accumulating logic in main again.
 
-This refactoring preserves the existing language semantics and REPL output format.
+Unannotated programs retain double semantics and the existing REPL output format,
+except that the new type and boolean keywords are reserved.
 Supporting a non-LLVM backend would still require changing the visitor result type;
 this prototype does not introduce a full multi-backend framework.
 
@@ -386,7 +526,7 @@ Optimization uses LLVM's [new pass manager](https://llvm.org/docs/NewPassManager
 and standard pipelines; no language-specific optimization pass is claimed here.
 
 Global variables are implemented, including native linkage and debug information.
-Further language features remain separate work: explicit types,
-arrays/structures, a richer runtime, heap allocation/GC, and exceptions. Types and
-memory semantics should be designed before adding `sizeof`, field offsets, or GC.
-The language still uses double values and native compilation targets.
+Explicit scalar types and conversions are implemented for native compilation targets.
+Further language features remain separate work: arrays/structures, a richer runtime,
+heap allocation/GC, and exceptions. Aggregate layout and memory semantics should be
+designed before adding `sizeof`, field offsets, or GC.

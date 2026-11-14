@@ -14,10 +14,24 @@ DebugInfo::DebugInfo(Module &module, const std::string &sourceFile) : Builder(mo
     module.addModuleFlag(Module::Warning, "Dwarf Version", 4);
     Unit = Builder.createCompileUnit(dwarf::DW_LANG_C, File, "Kaleidoscope Compiler", false, "", 0);
     DoubleType = Builder.createBasicType("double", 64, dwarf::DW_ATE_float);
+    IntegerType = Builder.createBasicType("i32", 32, dwarf::DW_ATE_signed);
+    BooleanType = Builder.createBasicType("bool", 8, dwarf::DW_ATE_boolean);
+}
+
+llvm::DIType *DebugInfo::debugType(llvm::Type *type) {
+    if (type->isDoubleTy())
+        return DoubleType;
+    if (type->isIntegerTy(32))
+        return IntegerType;
+    if (type->isIntegerTy(1))
+        return BooleanType;
+    llvm_unreachable("Unsupported debug type");
 }
 
 void DebugInfo::beginFunction(Function &function, SourceLocation location) {
-    std::vector<Metadata *> types(function.arg_size() + 1, DoubleType);
+    std::vector<Metadata *> types{debugType(function.getReturnType())};
+    for (auto &arg : function.args())
+        types.push_back(debugType(arg.getType()));
     auto type = Builder.createSubroutineType(Builder.getOrCreateTypeArray(types));
     auto scope = Builder.createFunction(File, function.getName(), function.getName(), File,
                                         location.Line, type, location.Line, DINode::FlagPrototyped,
@@ -49,10 +63,11 @@ void DebugInfo::pushScope(SourceLocation location) {
 void DebugInfo::declareVariable(AllocaInst *storage, StringRef name, SourceLocation location,
                                 BasicBlock *block, unsigned argument) {
     auto scope = Scopes.back();
-    auto variable =
-        argument ? Builder.createParameterVariable(scope, name, argument, File, location.Line,
-                                                   DoubleType, true)
-                 : Builder.createAutoVariable(scope, name, File, location.Line, DoubleType, true);
+    auto *type = debugType(storage->getAllocatedType());
+    auto variable = argument
+                        ? Builder.createParameterVariable(scope, name, argument, File,
+                                                          location.Line, type, true)
+                        : Builder.createAutoVariable(scope, name, File, location.Line, type, true);
     Builder.insertDeclare(
         storage, variable, Builder.createExpression(),
         DILocation::get(File->getContext(), location.Line, location.Column, scope), block);
@@ -60,7 +75,8 @@ void DebugInfo::declareVariable(AllocaInst *storage, StringRef name, SourceLocat
 
 void DebugInfo::declareGlobal(GlobalVariable &variable, SourceLocation location) {
     auto *expression = Builder.createGlobalVariableExpression(
-        Unit, variable.getName(), variable.getName(), File, location.Line, DoubleType, false, true);
+        Unit, variable.getName(), variable.getName(), File, location.Line,
+        debugType(variable.getValueType()), false, true);
     variable.addDebugInfo(expression);
 }
 

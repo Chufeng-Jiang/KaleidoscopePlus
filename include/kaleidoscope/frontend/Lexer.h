@@ -1,7 +1,7 @@
 #pragma once
-#include "kaleidoscope/SourceLocation.h"
-#include "kaleidoscope/SourceManager.h"
-#include "kaleidoscope/Token.h"
+#include "kaleidoscope/frontend/Token.h"
+#include "kaleidoscope/support/SourceLocation.h"
+#include "kaleidoscope/support/SourceManager.h"
 #include <istream>
 #include <string>
 namespace kaleidoscope {

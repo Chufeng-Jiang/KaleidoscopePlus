@@ -1,5 +1,5 @@
 #pragma once
-#include "kaleidoscope/SourceLocation.h"
+#include "kaleidoscope/support/SourceLocation.h"
 #include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/IRBuilder.h"
 #include <string>
@@ -26,6 +26,9 @@ class DebugInfo {
     llvm::DICompileUnit *Unit;
     llvm::DIFile *File;
     llvm::DIType *DoubleType;
+    llvm::DIType *IntegerType;
+    llvm::DIType *BooleanType;
+    llvm::DIType *debugType(llvm::Type *type);
     std::vector<llvm::DILocalScope *> Scopes;
 };
 } // namespace kaleidoscope

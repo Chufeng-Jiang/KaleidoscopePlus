@@ -1,4 +1,4 @@
-#include "kaleidoscope/Lexer.h"
+#include "kaleidoscope/frontend/Lexer.h"
 #include <cctype>
 #include <cerrno>
 #include <cstdio>
@@ -68,6 +68,12 @@ int Lexer::next() {
         if (IdentifierStr == "var")
             return tok_var;
 
+        if (IdentifierStr == "true")
+            return tok_true;
+        if (IdentifierStr == "false")
+            return tok_false;
+        if (IdentifierStr == "i32" || IdentifierStr == "bool" || IdentifierStr == "double")
+            return tok_type;
         // identifier
         return tok_identifier;
     }
@@ -85,6 +91,16 @@ int Lexer::next() {
         NumVal = strtod(NumStr.c_str(), &end);
         if (end == NumStr.c_str() || *end != '\0' || errno == ERANGE)
             return tok_invalid;
+        if (isalpha(LastChar)) {
+            std::string suffix;
+            do {
+                suffix += LastChar;
+                LastChar = advance();
+            } while (isalnum(LastChar));
+            if (suffix != "i32" || NumStr.find('.') != std::string::npos)
+                return tok_invalid;
+            return tok_integer;
+        }
         return tok_number;
     }
 
