@@ -1,4 +1,5 @@
 #pragma once
+#include "DebugInfo.h"
 #include "KaleidoscopeJIT.h"
 #include "kaleidoscope/AST.h"
 #include "kaleidoscope/Diagnostics.h"
@@ -43,6 +44,32 @@ struct CodegenContext : ExprVisitor {
     std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
 
     bool EmitObject = false;
+    bool EmitDebugInfo = false;
+    std::string SourceFile;
+    std::unique_ptr<DebugInfo> Debug;
+    SourceLocation CurrentLocation;
+
+    // Restore both diagnostic and instruction locations after visiting a child.
+    class LocationGuard {
+        CodegenContext &Context;
+        SourceLocation Previous;
+        llvm::DebugLoc PreviousDebug;
+
+      public:
+        LocationGuard(CodegenContext &context, SourceLocation location)
+            : Context(context), Previous(context.CurrentLocation),
+              PreviousDebug(context.Builder->getCurrentDebugLocation()) {
+            Context.CurrentLocation = location;
+            if (Context.Debug)
+                Context.Debug->emitLocation(*Context.Builder, location);
+        }
+        ~LocationGuard() {
+            Context.CurrentLocation = Previous;
+            Context.Builder->SetCurrentDebugLocation(PreviousDebug);
+        }
+        LocationGuard(const LocationGuard &) = delete;
+        LocationGuard &operator=(const LocationGuard &) = delete;
+    };
     std::unique_ptr<TargetMachine> TheTM;
 
     Value *LogErrorV(const char *message);

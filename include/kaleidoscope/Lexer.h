@@ -1,4 +1,5 @@
 #pragma once
+#include "kaleidoscope/SourceLocation.h"
 #include "kaleidoscope/Token.h"
 #include <istream>
 #include <string>
@@ -7,12 +8,18 @@ class Lexer {
   public:
     explicit Lexer(std::istream &input) : Input(input) {}
     int next();
+    SourceLocation location() const { return TokenLocation; }
     const std::string &identifier() const { return IdentifierStr; }
     double number() const { return NumVal; }
 
   private:
     std::istream &Input;
+    int advance();
     int LastChar = ' ';
+    SourceLocation NextLocation{1, 1};
+    SourceLocation CharLocation;
+    SourceLocation TokenLocation;
+    bool PreviousCR = false;
     std::string IdentifierStr;
     double NumVal = 0;
 };

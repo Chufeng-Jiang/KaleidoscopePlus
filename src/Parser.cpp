@@ -2,6 +2,14 @@
 #include <cctype>
 
 namespace kaleidoscope {
+namespace {
+template <class T, class... Args>
+std::unique_ptr<T> makeLocated(SourceLocation location, Args &&...args) {
+    auto result = std::make_unique<T>(std::forward<Args>(args)...);
+    result->setLocation(location);
+    return result;
+}
+} // namespace
 
 int Parser::getNextToken() { return CurTok = Lex.next(); }
 
@@ -20,7 +28,7 @@ int Parser::GetTokPrecedence() {
 }
 
 std::unique_ptr<ExprAST> Parser::LogError(const char *Str) {
-    Diag.error(Str);
+    Diag.error(Str, Lex.location());
     return nullptr;
 }
 
@@ -31,7 +39,7 @@ std::unique_ptr<PrototypeAST> Parser::LogErrorP(const char *Str) {
 
 // numberexpr ::= number
 std::unique_ptr<ExprAST> Parser::ParseNumberExpr() {
-    auto Result = std::make_unique<NumberExprAST>(Lex.number());
+    auto Result = makeLocated<NumberExprAST>(Lex.location(), Lex.number());
     getNextToken();
     return Result;
 }
@@ -53,12 +61,13 @@ std::unique_ptr<ExprAST> Parser::ParseParenExpr() {
 //  ::= identifier
 //  ::= identifier '(' expression* ')'
 std::unique_ptr<ExprAST> Parser::ParseIdentifierExpr() {
+    auto Loc = Lex.location();
     std::string IdName = Lex.identifier();
     getNextToken();
 
     // Variable
     if (CurTok != '(')
-        return std::make_unique<VariableExprAST>(IdName);
+        return makeLocated<VariableExprAST>(Loc, IdName);
 
     // Call
     getNextToken();
@@ -81,11 +90,12 @@ std::unique_ptr<ExprAST> Parser::ParseIdentifierExpr() {
     }
 
     getNextToken();
-    return std::make_unique<CallExprAST>(IdName, std::move(Args));
+    return makeLocated<CallExprAST>(Loc, IdName, std::move(Args));
 }
 
 // ifexpr ::= 'if' expression 'then' expression 'else' expression
 std::unique_ptr<ExprAST> Parser::ParseIfExpr() {
+    auto Loc = Lex.location();
     getNextToken();
 
     auto Cond = ParseExpression();
@@ -108,15 +118,17 @@ std::unique_ptr<ExprAST> Parser::ParseIfExpr() {
     if (!Else)
         return nullptr;
 
-    return std::make_unique<IfExprAST>(std::move(Cond), std::move(Then), std::move(Else));
+    return makeLocated<IfExprAST>(Loc, std::move(Cond), std::move(Then), std::move(Else));
 }
 
 // forexpr ::= 'for' identifier '=' expr ',' expr (',' expr)? 'in' expression
 std::unique_ptr<ExprAST> Parser::ParseForExpr() {
+    auto Loc = Lex.location();
     getNextToken();
     if (CurTok != tok_identifier)
         return LogError("expected identifier after for");
 
+    auto VariableLoc = Lex.location();
     std::string IdName = Lex.identifier();
     getNextToken();
     if (CurTok != '=')
@@ -150,21 +162,26 @@ std::unique_ptr<ExprAST> Parser::ParseForExpr() {
     if (!Body)
         return nullptr;
 
-    return std::make_unique<ForExprAST>(IdName, std::move(Start), std::move(End), std::move(Step),
-                                        std::move(Body));
+    auto result = makeLocated<ForExprAST>(Loc, IdName, std::move(Start), std::move(End),
+                                          std::move(Step), std::move(Body));
+    result->setVariableLocation(VariableLoc);
+    return result;
 }
 
 // varexpr ::= 'var' identifier ('=' expression)? (',' identifier ('=' expression)?)* 'in'
 // expression
 std::unique_ptr<ExprAST> Parser::ParseVarExpr() {
+    auto Loc = Lex.location();
     getNextToken();
 
     std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames;
+    std::vector<SourceLocation> VariableLocations;
 
     if (CurTok != tok_identifier)
         return LogError("excepted identifier after var");
 
     while (true) {
+        VariableLocations.push_back(Lex.location());
         std::string Name = Lex.identifier();
         getNextToken();
 
@@ -195,7 +212,9 @@ std::unique_ptr<ExprAST> Parser::ParseVarExpr() {
     if (!Body)
         return nullptr;
 
-    return std::make_unique<VarExprAST>(std::move(VarNames), std::move(Body));
+    auto result = makeLocated<VarExprAST>(Loc, std::move(VarNames), std::move(Body));
+    result->setVariableLocations(std::move(VariableLocations));
+    return result;
 }
 
 // primary
@@ -231,10 +250,11 @@ std::unique_ptr<ExprAST> Parser::ParseUnary() {
     if (!isascii(CurTok) || CurTok == '(' || CurTok == ',')
         return ParsePrimary();
 
+    auto Loc = Lex.location();
     int Opc = CurTok;
     getNextToken();
     if (auto Operand = ParseUnary())
-        return std::make_unique<UnaryExprAST>(Opc, std::move(Operand));
+        return makeLocated<UnaryExprAST>(Loc, Opc, std::move(Operand));
 
     return nullptr;
 }
@@ -246,6 +266,7 @@ std::unique_ptr<ExprAST> Parser::ParseBinOpRHS(int ExprPrec, std::unique_ptr<Exp
         if (TokPrec < ExprPrec)
             return LHS;
 
+        auto Loc = Lex.location();
         int BinOp = CurTok;
         getNextToken();
 
@@ -260,7 +281,7 @@ std::unique_ptr<ExprAST> Parser::ParseBinOpRHS(int ExprPrec, std::unique_ptr<Exp
                 return nullptr;
         }
 
-        LHS = std::make_unique<BinaryExprAST>(BinOp, std::move(LHS), std::move(RHS));
+        LHS = makeLocated<BinaryExprAST>(Loc, BinOp, std::move(LHS), std::move(RHS));
     }
 }
 
@@ -278,6 +299,7 @@ std::unique_ptr<ExprAST> Parser::ParseExpression() {
 //  ::= binary 'op' number? (id,id)
 //  ::= unary 'op' (id)
 std::unique_ptr<PrototypeAST> Parser::ParsePrototype() {
+    auto Loc = Lex.location();
     std::string FnName;
     unsigned Kind = 0; // 0=identifier, 1=unary, 2=binary
     unsigned BinaryPrecedence = 30;
@@ -323,8 +345,11 @@ std::unique_ptr<PrototypeAST> Parser::ParsePrototype() {
         return LogErrorP("Expected '(' in prototype");
 
     std::vector<std::string> ArgNames;
-    while (getNextToken() == tok_identifier)
+    std::vector<SourceLocation> ArgLocations;
+    while (getNextToken() == tok_identifier) {
         ArgNames.push_back(Lex.identifier());
+        ArgLocations.push_back(Lex.location());
+    }
     if (CurTok != ')')
         return LogErrorP("Expected ')' in prototype");
 
@@ -333,7 +358,9 @@ std::unique_ptr<PrototypeAST> Parser::ParsePrototype() {
     if (Kind && ArgNames.size() != Kind)
         return LogErrorP("Invalid number of operands for operator");
 
-    return std::make_unique<PrototypeAST>(FnName, ArgNames, Kind != 0, BinaryPrecedence);
+    auto result = makeLocated<PrototypeAST>(Loc, FnName, ArgNames, Kind != 0, BinaryPrecedence);
+    result->setArgumentLocations(std::move(ArgLocations));
+    return result;
 }
 
 // definition ::= 'def' prototype expression
@@ -350,8 +377,9 @@ std::unique_ptr<FunctionAST> Parser::ParseDefinition() {
 
 // toplevelexpr ::= expression
 std::unique_ptr<FunctionAST> Parser::ParseTopLevelExpr() {
+    auto Loc = Lex.location();
     if (auto E = ParseExpression()) {
-        auto Proto = std::make_unique<PrototypeAST>("__anon_expr", std::vector<std::string>());
+        auto Proto = makeLocated<PrototypeAST>(Loc, "__anon_expr", std::vector<std::string>());
         return std::make_unique<FunctionAST>(std::move(Proto), std::move(E));
     }
     return nullptr;

@@ -1,4 +1,5 @@
 #pragma once
+#include "kaleidoscope/SourceLocation.h"
 #include <cassert>
 #include <memory>
 #include <string>
@@ -35,7 +36,11 @@ class ExprVisitor {
 };
 
 class ExprAST {
+    SourceLocation Location;
+
   public:
+    SourceLocation location() const { return Location; }
+    void setLocation(SourceLocation loc) { Location = loc; }
     virtual ~ExprAST() = default;
     virtual const std::string *variableName() const { return nullptr; }
     virtual llvm::Value *accept(ExprVisitor &visitor) = 0;
@@ -114,9 +119,11 @@ class IfExprAST : public ExprAST {
 class ForExprAST : public ExprAST {
     friend struct CodegenContext;
     std::string VarName;
+    SourceLocation VariableLocation;
     std::unique_ptr<ExprAST> Start, End, Step, Body;
 
   public:
+    void setVariableLocation(SourceLocation loc) { VariableLocation = loc; }
     ForExprAST(const std::string &VarName, std::unique_ptr<ExprAST> Start,
                std::unique_ptr<ExprAST> End, std::unique_ptr<ExprAST> Step,
                std::unique_ptr<ExprAST> Body)
@@ -129,9 +136,13 @@ class ForExprAST : public ExprAST {
 class VarExprAST : public ExprAST {
     friend struct CodegenContext;
     std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames;
+    std::vector<SourceLocation> VariableLocations;
     std::unique_ptr<ExprAST> Body;
 
   public:
+    void setVariableLocations(std::vector<SourceLocation> locations) {
+        VariableLocations = std::move(locations);
+    }
     VarExprAST(std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames,
                std::unique_ptr<ExprAST> Body)
         : VarNames(std::move(VarNames)), Body(std::move(Body)) {}
@@ -145,6 +156,8 @@ class PrototypeAST {
     std::vector<std::string> Args;
     bool IsOperator;
     unsigned Precedence;
+    SourceLocation Location;
+    std::vector<SourceLocation> ArgumentLocations;
 
   public:
     PrototypeAST(const std::string &Name, std::vector<std::string> Args, bool IsOperator = false,
@@ -156,6 +169,11 @@ class PrototypeAST {
     char getOperatorName() const {
         assert(isUnaryOp() || isBinaryOp());
         return Name[Name.size() - 1];
+    }
+    SourceLocation location() const { return Location; }
+    void setLocation(SourceLocation loc) { Location = loc; }
+    void setArgumentLocations(std::vector<SourceLocation> locations) {
+        ArgumentLocations = std::move(locations);
     }
     unsigned getBinaryPrecedence() const { return Precedence; }
 };

@@ -5,16 +5,42 @@
 
 namespace kaleidoscope {
 
+int Lexer::advance() {
+    int ch = Input.get();
+    CharLocation = NextLocation;
+    if (ch == '\r') {
+        ++NextLocation.Line;
+        NextLocation.Column = 1;
+    } else if (ch == '\n') {
+        if (!PreviousCR)
+            ++NextLocation.Line;
+        NextLocation.Column = 1;
+    } else if (ch != EOF) {
+        ++NextLocation.Column;
+    }
+    PreviousCR = ch == '\r';
+    return ch;
+}
+
 int Lexer::next() {
 
-    // skip white
-    while (isspace(LastChar))
-        LastChar = Input.get();
+    // Skip whitespace and comments iteratively, including a comment ending at EOF.
+    while (true) {
+        while (isspace(LastChar))
+            LastChar = advance();
+        if (LastChar != '#')
+            break;
+        do
+            LastChar = advance();
+        while (LastChar != EOF && LastChar != '\n' && LastChar != '\r');
+    }
+
+    TokenLocation = CharLocation;
 
     // keyword & identifier
     if (isalpha(LastChar)) {
         IdentifierStr = LastChar;
-        while (isalnum(LastChar = Input.get()))
+        while (isalnum(LastChar = advance()))
             IdentifierStr += LastChar;
 
         // keyword
@@ -48,21 +74,11 @@ int Lexer::next() {
         std::string NumStr;
         do {
             NumStr += LastChar;
-            LastChar = Input.get();
+            LastChar = advance();
         } while (isdigit(LastChar) || LastChar == '.');
 
         NumVal = strtod(NumStr.c_str(), 0);
         return tok_number;
-    }
-
-    // comment
-    if (LastChar == '#') {
-        do
-            LastChar = Input.get();
-        while (LastChar != EOF && LastChar != '\n' && LastChar != '\r');
-
-        if (LastChar != EOF)
-            return next();
     }
 
     // end
@@ -71,7 +87,7 @@ int Lexer::next() {
 
     // other character
     int ThisChar = LastChar;
-    LastChar = Input.get();
+    LastChar = advance();
     return ThisChar;
 }
 

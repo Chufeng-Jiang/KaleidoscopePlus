@@ -1,5 +1,6 @@
 #include "CodegenContext.h"
 #include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -14,7 +15,7 @@
 namespace kaleidoscope {
 
 Value *CodegenContext::LogErrorV(const char *Str) {
-    Diag.error(Str);
+    Diag.error(Str, CurrentLocation);
     return nullptr;
 }
 
@@ -37,11 +38,13 @@ AllocaInst *CodegenContext::CreateEntryBlockAlloca(Function *TheFunction, String
 
 Value *CodegenContext::visit(NumberExprAST &node) {
     auto &ctx = *this;
+    LocationGuard location(*this, node.location());
     return ConstantFP::get(*ctx.TheContext, APFloat(node.Val));
 }
 
 Value *CodegenContext::visit(VariableExprAST &node) {
     auto &ctx = *this;
+    LocationGuard location(*this, node.location());
     AllocaInst *A = ctx.NamedValues[node.Name];
     if (!A)
         return ctx.LogErrorV("Unknown variable name");
@@ -50,6 +53,7 @@ Value *CodegenContext::visit(VariableExprAST &node) {
 
 Value *CodegenContext::visit(UnaryExprAST &node) {
     auto &ctx = *this;
+    LocationGuard location(*this, node.location());
     Value *OperandV = node.Operand->accept(ctx);
     if (!OperandV)
         return nullptr;
@@ -63,6 +67,7 @@ Value *CodegenContext::visit(UnaryExprAST &node) {
 
 Value *CodegenContext::visit(BinaryExprAST &node) {
     auto &ctx = *this;
+    LocationGuard location(*this, node.location());
     if (node.Op == '=') {
         const std::string *LHSE = node.LHS->variableName();
         if (!LHSE)
@@ -109,6 +114,7 @@ Value *CodegenContext::visit(BinaryExprAST &node) {
 
 Value *CodegenContext::visit(CallExprAST &node) {
     auto &ctx = *this;
+    LocationGuard location(*this, node.location());
     Function *CalleeF = ctx.getFunction(node.Callee);
     if (!CalleeF)
         return ctx.LogErrorV("Unknown function referenced");
@@ -128,6 +134,7 @@ Value *CodegenContext::visit(CallExprAST &node) {
 
 Value *CodegenContext::visit(IfExprAST &node) {
     auto &ctx = *this;
+    LocationGuard location(*this, node.location());
     Value *CondV = node.Cond->accept(ctx);
     if (!CondV)
         return nullptr;
@@ -170,12 +177,24 @@ Value *CodegenContext::visit(IfExprAST &node) {
 
 Value *CodegenContext::visit(ForExprAST &node) {
     auto &ctx = *this;
+    LocationGuard location(*this, node.location());
+    const auto depth = Debug ? Debug->scopeDepth() : 0;
+    auto restoreScopes = llvm::make_scope_exit([&] {
+        if (Debug)
+            Debug->restoreScopes(depth);
+    });
     Function *TheFunction = ctx.Builder->GetInsertBlock()->getParent();
     AllocaInst *Alloca = ctx.CreateEntryBlockAlloca(TheFunction, node.VarName);
 
     Value *StartVal = node.Start->accept(ctx);
     if (!StartVal)
         return nullptr;
+    if (Debug) {
+        Debug->pushScope(node.VariableLocation);
+        Debug->emitLocation(*Builder, node.location());
+        Debug->declareVariable(Alloca, node.VarName, node.VariableLocation,
+                               Builder->GetInsertBlock());
+    }
     ctx.Builder->CreateStore(StartVal, Alloca);
 
     BasicBlock *LoopBB = BasicBlock::Create(*ctx.TheContext, "loop", TheFunction);
@@ -185,6 +204,12 @@ Value *CodegenContext::visit(ForExprAST &node) {
 
     AllocaInst *OldVal = ctx.NamedValues[node.VarName];
     ctx.NamedValues[node.VarName] = Alloca;
+    auto restoreBinding = llvm::make_scope_exit([&] {
+        if (OldVal)
+            ctx.NamedValues[node.VarName] = OldVal;
+        else
+            ctx.NamedValues.erase(node.VarName);
+    });
 
     if (!node.Body->accept(ctx))
         return nullptr;
@@ -215,17 +240,27 @@ Value *CodegenContext::visit(ForExprAST &node) {
     ctx.Builder->CreateCondBr(EndCond, LoopBB, AfterBB);
     ctx.Builder->SetInsertPoint(AfterBB);
 
-    if (OldVal)
-        ctx.NamedValues[node.VarName] = OldVal;
-    else
-        ctx.NamedValues.erase(node.VarName);
-
     return Constant::getNullValue(Type::getDoubleTy(*ctx.TheContext));
 }
 
 Value *CodegenContext::visit(VarExprAST &node) {
     auto &ctx = *this;
+    LocationGuard location(*this, node.location());
+    const auto depth = Debug ? Debug->scopeDepth() : 0;
+    auto restoreScopes = llvm::make_scope_exit([&] {
+        if (Debug)
+            Debug->restoreScopes(depth);
+    });
     std::vector<AllocaInst *> OldBindings;
+    auto restoreBindings = llvm::make_scope_exit([&] {
+        for (std::size_t i = OldBindings.size(); i > 0; --i) {
+            const auto &name = node.VarNames[i - 1].first;
+            if (OldBindings[i - 1])
+                NamedValues[name] = OldBindings[i - 1];
+            else
+                NamedValues.erase(name);
+        }
+    });
     Function *TheFunction = ctx.Builder->GetInsertBlock()->getParent();
 
     for (unsigned i = 0, e = node.VarNames.size(); i != e; ++i) {
@@ -242,6 +277,13 @@ Value *CodegenContext::visit(VarExprAST &node) {
         }
 
         AllocaInst *Alloca = ctx.CreateEntryBlockAlloca(TheFunction, VarName);
+        if (Debug) {
+            auto loc =
+                i < node.VariableLocations.size() ? node.VariableLocations[i] : node.location();
+            Debug->pushScope(loc);
+            Debug->emitLocation(*Builder, loc);
+            Debug->declareVariable(Alloca, VarName, loc, Builder->GetInsertBlock());
+        }
         ctx.Builder->CreateStore(InitVal, Alloca);
 
         OldBindings.push_back(ctx.NamedValues[VarName]);
@@ -251,10 +293,6 @@ Value *CodegenContext::visit(VarExprAST &node) {
     Value *BodyVal = node.Body->accept(ctx);
     if (!BodyVal)
         return nullptr;
-
-    for (unsigned i = 0, e = node.VarNames.size(); i != e; ++i) {
-        ctx.NamedValues[node.VarNames[i].first] = OldBindings[i];
-    }
 
     return BodyVal;
 }
@@ -281,28 +319,68 @@ Function *CodegenContext::generate(FunctionAST &node) {
     if (!TheFunction)
         return nullptr;
 
+    if (TheFunction->arg_size() != P.Args.size()) {
+        Diag.error("Function signature does not match previous declaration", P.location());
+        return nullptr;
+    }
+    if (!TheFunction->empty()) {
+        Diag.error("Function is already defined", P.location());
+        return nullptr;
+    }
+    // A definition may rename the parameters from an earlier extern declaration.
+    for (auto &Arg : TheFunction->args())
+        Arg.setName("");
+
     if (P.isBinaryOp())
         ctx.BinopPrecedence[P.getOperatorName()] = P.getBinaryPrecedence();
 
     BasicBlock *BB = BasicBlock::Create(*ctx.TheContext, "entry", TheFunction);
     ctx.Builder->SetInsertPoint(BB);
 
+    Builder->SetCurrentDebugLocation(DebugLoc());
+    if (Debug)
+        Debug->beginFunction(*TheFunction, P.location());
+    auto finishDebug = llvm::make_scope_exit([&] {
+        if (Debug)
+            Debug->endFunction();
+        Builder->SetCurrentDebugLocation(DebugLoc());
+    });
     ctx.NamedValues.clear();
+    unsigned argumentIndex = 0;
     for (auto &Arg : TheFunction->args()) {
+        Arg.setName(P.Args[argumentIndex]);
         AllocaInst *Alloca = ctx.CreateEntryBlockAlloca(TheFunction, Arg.getName());
+        if (Debug) {
+            auto loc = argumentIndex < P.ArgumentLocations.size()
+                           ? P.ArgumentLocations[argumentIndex]
+                           : P.location();
+            Debug->declareVariable(Alloca, Arg.getName(), loc, Builder->GetInsertBlock(),
+                                   argumentIndex + 1);
+        }
+        ++argumentIndex;
         ctx.Builder->CreateStore(&Arg, Alloca);
         ctx.NamedValues[std::string(Arg.getName())] = Alloca;
     }
 
     if (Value *RetVal = node.Body->accept(ctx)) {
+        if (Debug)
+            Debug->emitLocation(*Builder, node.Body->location());
         ctx.Builder->CreateRet(RetVal);
-        verifyFunction(*TheFunction);
-
-        ctx.TheFPM->run(*TheFunction, *ctx.TheFAM);
+        if (Debug)
+            Debug->endFunction();
+        if (verifyFunction(*TheFunction, &errs())) {
+            Diag.error("Invalid generated function", P.location());
+            TheFunction->eraseFromParent();
+            return nullptr;
+        }
+        if (!EmitDebugInfo)
+            ctx.TheFPM->run(*TheFunction, *ctx.TheFAM);
 
         return TheFunction;
     }
 
+    if (Debug)
+        Debug->endFunction();
     TheFunction->eraseFromParent();
     if (P.isBinaryOp())
         ctx.BinopPrecedence.erase(P.getOperatorName());
@@ -318,6 +396,8 @@ void CodegenContext::initializeModule() {
     } else
         TheModule->setDataLayout(TheJIT->getDataLayout());
     Builder = std::make_unique<IRBuilder<>>(*TheContext);
+    if (EmitDebugInfo)
+        Debug = std::make_unique<DebugInfo>(*TheModule, SourceFile);
 
     TheFPM = std::make_unique<FunctionPassManager>();
     TheLAM = std::make_unique<LoopAnalysisManager>();

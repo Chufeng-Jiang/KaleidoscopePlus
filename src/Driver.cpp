@@ -2,6 +2,7 @@
 #include "CodegenContext.h"
 #include "kaleidoscope/Parser.h"
 #include "llvm/IR/LegacyPassManager.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/TargetSelect.h"
@@ -111,10 +112,31 @@ int Compiler::run(int argc, char *argv[]) {
     InitializeNativeTargetAsmPrinter();
     InitializeNativeTargetAsmParser();
 
+    std::string InputFile;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "-g")
+            Context.EmitDebugInfo = true;
+        else if (arg == "--help" || arg == "-h") {
+            outs() << "Usage: kale [-g] [source.kale]\n"
+                   << "No file: interactive JIT. -g: unoptimized object with DWARF (requires a "
+                      "file).\n";
+            return 0;
+        } else if (arg.empty() || arg[0] == '-' || !InputFile.empty()) {
+            errs() << "Usage: kale [-g] [source.kale]\n";
+            return 1;
+        } else
+            InputFile = arg;
+    }
+    if (Context.EmitDebugInfo && InputFile.empty()) {
+        errs() << "-g requires an input file; JIT source debugging is not supported\n";
+        return 1;
+    }
     std::string OutputFile;
-    if (argc == 2) {
+    if (!InputFile.empty()) {
         Context.EmitObject = true;
-        std::string InputFile = argv[1];
+        Context.SourceFile = InputFile;
+        Diag.setSourceFile(InputFile);
         OutputFile = InputFile + ".o";
         Input.open(InputFile);
         if (!Input) {
@@ -133,8 +155,9 @@ int Compiler::run(int argc, char *argv[]) {
         }
 
         TargetOptions Opt;
-        Context.TheTM.reset(
-            Target->createTargetMachine(TargetTriple, "generic", "", Opt, Reloc::PIC_));
+        Context.TheTM.reset(Target->createTargetMachine(
+            TargetTriple, "generic", "", Opt, Reloc::PIC_, std::nullopt,
+            Context.EmitDebugInfo ? CodeGenOptLevel::None : CodeGenOptLevel::Default));
     } else {
         Context.TheJIT = Context.ExitOnErr(KaleidoscopeJIT::Create());
     }
@@ -147,11 +170,17 @@ int Compiler::run(int argc, char *argv[]) {
     MainLoop();
 
     if (Context.EmitObject) {
+        if (Context.Debug)
+            Context.Debug->finalize();
         if (Diag.hasError()) {
             errs() << "Compile error!";
             return 1;
         }
 
+        if (verifyModule(*Context.TheModule, &errs())) {
+            errs() << "Invalid generated module\n";
+            return 1;
+        }
         std::error_code EC;
         raw_fd_ostream Dest(OutputFile, EC, sys::fs::OF_None);
         if (EC) {
