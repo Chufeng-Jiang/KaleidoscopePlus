@@ -1,1 +1,6 @@
-clang++ -g -O3 main.cpp -rdynamic `llvm-config --cxxflags --ldflags --system-libs --libs all` -o kale
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+cmake -S . -B build "$@"
+cmake --build build --parallel
+cp build/kale ./kale
