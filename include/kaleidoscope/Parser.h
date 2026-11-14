@@ -10,6 +10,7 @@ class Parser {
         : Lex(lexer), Diag(diagnostics), BinopPrecedence(operators) {}
     int currentToken() const { return CurTok; }
     int getNextToken();
+    void synchronize();
     std::unique_ptr<FunctionAST> ParseDefinition();
     std::unique_ptr<FunctionAST> ParseTopLevelExpr();
     std::unique_ptr<PrototypeAST> ParseExtern(bool keywordConsumed = false);

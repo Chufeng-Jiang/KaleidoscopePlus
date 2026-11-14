@@ -7,7 +7,8 @@ if(LLVM_VERSION_MAJOR LESS 21)
     message(FATAL_ERROR "Kaleidoscope requires LLVM 21 or newer; set LLVM_DIR to its lib/cmake/llvm directory")
 endif()
 
-add_library(kaleidoscope_frontend src/Lexer.cpp src/Parser.cpp src/Diagnostics.cpp)
+add_library(kaleidoscope_frontend src/Lexer.cpp src/Parser.cpp src/Diagnostics.cpp
+    src/SourceManager.cpp src/SemanticAnalyzer.cpp)
 target_include_directories(kaleidoscope_frontend PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(kaleidoscope_frontend PUBLIC cxx_std_17)
 
@@ -88,4 +89,12 @@ if(BUILD_TESTING)
                     $<TARGET_FILE:kale> ${CMAKE_CXX_COMPILER} ${CMAKE_CURRENT_SOURCE_DIR}
                     --debugger-only --lldb ${KALEIDOSCOPE_LLDB} --dwarf ${KALEIDOSCOPE_DWARFDUMP})
     endif()
+endif()
+
+if(BUILD_TESTING)
+    add_executable(semantic_test tests/semantic_test.cpp)
+    target_link_libraries(semantic_test PRIVATE kaleidoscope_frontend)
+    add_test(NAME semantic_analysis COMMAND semantic_test)
+    add_test(NAME diagnostics_recovery
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/diagnostics_test.py $<TARGET_FILE:kale>)
 endif()

@@ -4,6 +4,8 @@
 #include "Optimizer.h"
 #include "Output.h"
 #include "kaleidoscope/Parser.h"
+#include "kaleidoscope/SemanticAnalyzer.h"
+#include "kaleidoscope/SourceManager.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetOptions.h"
@@ -17,17 +19,19 @@ namespace kaleidoscope {
 class Compiler {
   public:
     Compiler()
-        : Source(std::cin.rdbuf()), Diag(std::cerr), Lex(Source), Syntax(Lex, Diag, Operators),
-          Context(Diag, Operators) {}
+        : Source(std::cin.rdbuf()), Diag(std::cerr, &SourceText), Lex(Source, &SourceText),
+          Syntax(Lex, Diag, Operators), Semantics(Diag, Operators), Context(Diag) {}
     int run(int argc, char *argv[]);
 
   private:
     std::ifstream Input;
     std::istream Source;
+    SourceManager SourceText;
     Diagnostics Diag;
     OperatorTable Operators{{'=', 2}, {'<', 10}, {'+', 20}, {'-', 20}, {'*', 40}};
     Lexer Lex;
     Parser Syntax;
+    SemanticAnalyzer Semantics;
     CodegenContext Context;
     void HandleDefinition();
     void HandleExtern();
@@ -39,7 +43,10 @@ class Compiler {
 
 void Compiler::HandleDefinition() {
     if (auto FnAST = Syntax.ParseDefinition()) {
+        if (!Semantics.analyze(*FnAST))
+            return;
         if (auto *FnIR = Context.generate(*FnAST)) {
+            Semantics.commit(*FnAST);
             if (!Context.FileMode) {
                 fprintf(stderr, "Read function definition:");
                 FnIR->print(errs());
@@ -50,7 +57,7 @@ void Compiler::HandleDefinition() {
                 SubmitJITModule();
         }
     } else
-        Syntax.getNextToken();
+        Syntax.synchronize();
 }
 
 void Compiler::HandleExtern() {
@@ -60,7 +67,10 @@ void Compiler::HandleExtern() {
         return;
     }
     if (auto ProtoAST = Syntax.ParseExtern(true)) {
+        if (!Semantics.analyze(*ProtoAST))
+            return;
         if (auto *FnIR = Context.generate(*ProtoAST)) {
+            Semantics.commit(*ProtoAST);
             if (!Context.FileMode) {
                 fprintf(stderr, "Read extern");
                 FnIR->print(errs());
@@ -70,12 +80,17 @@ void Compiler::HandleExtern() {
             Context.FunctionProtos[ProtoAST->getName()] = std::move(ProtoAST);
         }
     } else
-        Syntax.getNextToken();
+        Syntax.synchronize();
 }
 
 void Compiler::HandleTopLevelExpression() {
     if (auto FnAST = Syntax.ParseTopLevelExpr()) {
-        if (Context.generate(*FnAST) && !Context.FileMode) {
+        if (!Semantics.analyze(*FnAST, !Context.FileMode))
+            return;
+        if (!Context.generate(*FnAST))
+            return;
+        Semantics.commit(*FnAST, !Context.FileMode);
+        if (!Context.FileMode) {
             if (!optimizeModule(*Context.TheModule, nullptr, Context.Optimization)) {
                 Diag.error("Invalid generated module");
                 return;
@@ -93,7 +108,7 @@ void Compiler::HandleTopLevelExpression() {
             Context.ExitOnErr(RT->remove());
         }
     } else
-        Syntax.getNextToken();
+        Syntax.synchronize();
 }
 
 bool Compiler::SubmitJITModule() {
@@ -109,19 +124,17 @@ bool Compiler::SubmitJITModule() {
 
 void Compiler::HandleGlobal(bool external) {
     if (auto global = Syntax.ParseGlobal(external)) {
-        if (Context.generate(*global) && !Context.FileMode && !global->isExternal()) {
+        if (!Semantics.analyze(*global))
+            return;
+        if (!Context.generate(*global))
+            return;
+        Semantics.commit(*global);
+        if (!Context.FileMode && !global->isExternal()) {
             // Global definitions belong to the persistent JIT tracker, not a temporary expression.
             SubmitJITModule();
         }
-    } else {
-        // Do not execute the remaining tokens of an invalid initializer as REPL expressions.
-        while (Syntax.currentToken() != tok_eof && Syntax.currentToken() != ';' &&
-               Syntax.currentToken() != tok_def && Syntax.currentToken() != tok_extern &&
-               Syntax.currentToken() != tok_global)
-            Syntax.getNextToken();
-        if (Syntax.currentToken() == ';')
-            Syntax.getNextToken();
-    }
+    } else
+        Syntax.synchronize();
 }
 
 // top ::= definition | global | external | expression | ';'

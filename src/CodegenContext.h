@@ -3,7 +3,6 @@
 #include "KaleidoscopeJIT.h"
 #include "kaleidoscope/AST.h"
 #include "kaleidoscope/Diagnostics.h"
-#include "kaleidoscope/Operators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -19,10 +18,8 @@ using namespace llvm;
 using namespace llvm::orc;
 
 struct CodegenContext : ExprVisitor {
-    CodegenContext(Diagnostics &diagnostics, OperatorTable &operators)
-        : Diag(diagnostics), BinopPrecedence(operators) {}
+    explicit CodegenContext(Diagnostics &diagnostics) : Diag(diagnostics) {}
     Diagnostics &Diag;
-    OperatorTable &BinopPrecedence;
     std::unique_ptr<LLVMContext> TheContext;
     std::unique_ptr<Module> TheModule;
     std::unique_ptr<IRBuilder<>> Builder;
@@ -32,12 +29,8 @@ struct CodegenContext : ExprVisitor {
     ExitOnError ExitOnErr;
     std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
 
-    struct GlobalSymbol {
-        bool Defined = false;
-    };
-    // Only language-level state persists across JIT modules, never LLVM pointers.
-    std::map<std::string, GlobalSymbol> Globals;
-    std::set<std::string> DefinedFunctions;
+    // Lowering caches only: semantic validity/definitions belong to SemanticAnalyzer.
+    std::set<std::string> GlobalNames;
     bool FileMode = false;
     bool EmitDebugInfo = false;
     unsigned Optimization = 2;

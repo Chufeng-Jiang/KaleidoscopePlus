@@ -1,5 +1,4 @@
 #include "kaleidoscope/Parser.h"
-#include <algorithm>
 #include <cctype>
 
 namespace kaleidoscope {
@@ -13,6 +12,13 @@ std::unique_ptr<T> makeLocated(SourceLocation location, Args &&...args) {
 } // namespace
 
 int Parser::getNextToken() { return CurTok = Lex.next(); }
+
+void Parser::synchronize() {
+    // Leave boundaries unconsumed: the driver owns the next declaration/semicolon.
+    while (CurTok != tok_eof && CurTok != ';' && CurTok != tok_def && CurTok != tok_extern &&
+           CurTok != tok_global)
+        getNextToken();
+}
 
 int Parser::GetTokPrecedence() {
     if (!isascii(CurTok))
@@ -179,7 +185,7 @@ std::unique_ptr<ExprAST> Parser::ParseVarExpr() {
     std::vector<SourceLocation> VariableLocations;
 
     if (CurTok != tok_identifier)
-        return LogError("excepted identifier after var");
+        return LogError("expected identifier after var");
 
     while (true) {
         VariableLocations.push_back(Lex.location());
@@ -228,7 +234,7 @@ std::unique_ptr<ExprAST> Parser::ParseVarExpr() {
 std::unique_ptr<ExprAST> Parser::ParsePrimary() {
     switch (CurTok) {
     default:
-        return LogError("unkonwn token when expecting an expression");
+        return LogError("Unknown token when expecting an expression");
     case tok_invalid:
         return LogError("Invalid numeric literal");
     case tok_identifier:
@@ -250,6 +256,8 @@ std::unique_ptr<ExprAST> Parser::ParsePrimary() {
 //  ::= primary
 //  ::= 'op' unary
 std::unique_ptr<ExprAST> Parser::ParseUnary() {
+    if (CurTok == ';' || CurTok == ')' || CurTok == ',')
+        return LogError("Expected expression");
     if (!isascii(CurTok) || CurTok == '(' || CurTok == ',')
         return ParsePrimary();
 
@@ -350,8 +358,6 @@ std::unique_ptr<PrototypeAST> Parser::ParsePrototype() {
     std::vector<std::string> ArgNames;
     std::vector<SourceLocation> ArgLocations;
     while (getNextToken() == tok_identifier) {
-        if (std::find(ArgNames.begin(), ArgNames.end(), Lex.identifier()) != ArgNames.end())
-            return LogErrorP("Duplicate parameter name");
         ArgNames.push_back(Lex.identifier());
         ArgLocations.push_back(Lex.location());
     }

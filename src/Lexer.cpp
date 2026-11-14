@@ -7,7 +7,7 @@
 namespace kaleidoscope {
 
 int Lexer::advance() {
-    int ch = Input.get();
+    int ch = Source ? Source->get(Input) : Input.get();
     CharLocation = NextLocation;
     if (ch == '\r') {
         ++NextLocation.Line;

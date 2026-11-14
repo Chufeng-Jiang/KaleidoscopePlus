@@ -293,18 +293,9 @@ Value *CodegenContext::visit(VarExprAST &node) {
 
 Function *CodegenContext::generate(PrototypeAST &node) {
     auto &ctx = *this;
-    if (Globals.count(node.Name)) {
-        Diag.error("Function name conflicts with a global variable", node.location());
-        return nullptr;
-    }
-    auto previous = FunctionProtos.find(node.Name);
-    if (previous != FunctionProtos.end() && previous->second->Args.size() != node.Args.size()) {
-        Diag.error("Function signature does not match previous declaration", node.location());
-        return nullptr;
-    }
     if (auto *existing = TheModule->getFunction(node.Name)) {
         if (existing->arg_size() != node.Args.size()) {
-            Diag.error("Function signature does not match previous declaration", node.location());
+            Diag.error("Internal error: conflicting lowered function type", node.location());
             return nullptr;
         }
         return existing;
@@ -323,21 +314,17 @@ Function *CodegenContext::generate(PrototypeAST &node) {
 Function *CodegenContext::generate(FunctionAST &node) {
     auto &ctx = *this;
     auto &P = *node.Proto;
-    if (P.getName() != "__anon_expr" && DefinedFunctions.count(P.getName())) {
-        Diag.error("Function is already defined", P.location());
-        return nullptr;
-    }
     Function *TheFunction = generate(P);
 
     if (!TheFunction)
         return nullptr;
 
     if (TheFunction->arg_size() != P.Args.size()) {
-        Diag.error("Function signature does not match previous declaration", P.location());
+        Diag.error("Internal error: conflicting lowered function type", P.location());
         return nullptr;
     }
     if (!TheFunction->empty()) {
-        Diag.error("Function is already defined", P.location());
+        Diag.error("Internal error: duplicate lowered function", P.location());
         return nullptr;
     }
     // A definition may rename the parameters from an earlier extern declaration.
@@ -345,25 +332,12 @@ Function *CodegenContext::generate(FunctionAST &node) {
         Arg.setName("");
 
     bool completed = false;
-    const auto previous =
-        P.isBinaryOp() ? BinopPrecedence.find(P.getOperatorName()) : BinopPrecedence.end();
-    const int oldPrecedence = previous == BinopPrecedence.end() ? -1 : previous->second;
-    const bool binary = P.isBinaryOp();
-    const char op = binary ? P.getOperatorName() : 0;
     auto rollback = llvm::make_scope_exit([&] {
         if (!completed) {
             TheFunction->deleteBody();
             TheFunction->setSubprogram(nullptr);
-            if (binary) {
-                if (oldPrecedence < 0)
-                    BinopPrecedence.erase(op);
-                else
-                    BinopPrecedence[op] = oldPrecedence;
-            }
         }
     });
-    if (binary)
-        BinopPrecedence[op] = P.getBinaryPrecedence();
 
     BasicBlock *BB = BasicBlock::Create(*ctx.TheContext, "entry", TheFunction);
     ctx.Builder->SetInsertPoint(BB);
@@ -405,9 +379,7 @@ Function *CodegenContext::generate(FunctionAST &node) {
         }
 
         completed = true;
-        if (P.getName() != "__anon_expr")
-            DefinedFunctions.insert(P.getName());
-        FunctionProtos[P.getName()] = std::move(node.Proto);
+        FunctionProtos[P.getName()] = std::make_unique<PrototypeAST>(P);
         return TheFunction;
     }
 

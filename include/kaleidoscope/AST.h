@@ -12,6 +12,7 @@ class Value;
 namespace kaleidoscope {
 
 struct CodegenContext;
+class SemanticAnalyzer;
 class NumberExprAST;
 class VariableExprAST;
 class UnaryExprAST;
@@ -20,6 +21,19 @@ class CallExprAST;
 class IfExprAST;
 class ForExprAST;
 class VarExprAST;
+
+class ConstExprVisitor {
+  public:
+    virtual ~ConstExprVisitor() = default;
+    virtual void visit(const NumberExprAST &node) = 0;
+    virtual void visit(const VariableExprAST &node) = 0;
+    virtual void visit(const UnaryExprAST &node) = 0;
+    virtual void visit(const BinaryExprAST &node) = 0;
+    virtual void visit(const CallExprAST &node) = 0;
+    virtual void visit(const IfExprAST &node) = 0;
+    virtual void visit(const ForExprAST &node) = 0;
+    virtual void visit(const VarExprAST &node) = 0;
+};
 
 // Backends implement this interface; AST nodes do not link against LLVM.
 class ExprVisitor {
@@ -44,20 +58,24 @@ class ExprAST {
     virtual ~ExprAST() = default;
     virtual const std::string *variableName() const { return nullptr; }
     virtual llvm::Value *accept(ExprVisitor &visitor) = 0;
+    virtual void accept(ConstExprVisitor &visitor) const = 0;
 };
 
 class NumberExprAST : public ExprAST {
     friend struct CodegenContext;
+    friend class SemanticAnalyzer;
     double Val;
 
   public:
     NumberExprAST(double Val) : Val(Val) {}
 
     llvm::Value *accept(ExprVisitor &visitor) override { return visitor.visit(*this); }
+    void accept(ConstExprVisitor &visitor) const override { visitor.visit(*this); }
 };
 
 class VariableExprAST : public ExprAST {
     friend struct CodegenContext;
+    friend class SemanticAnalyzer;
     std::string Name;
 
   public:
@@ -66,10 +84,12 @@ class VariableExprAST : public ExprAST {
     const std::string *variableName() const override { return &Name; }
 
     llvm::Value *accept(ExprVisitor &visitor) override { return visitor.visit(*this); }
+    void accept(ConstExprVisitor &visitor) const override { visitor.visit(*this); }
 };
 
 class UnaryExprAST : public ExprAST {
     friend struct CodegenContext;
+    friend class SemanticAnalyzer;
     char Opcode;
     std::unique_ptr<ExprAST> Operand;
 
@@ -78,10 +98,12 @@ class UnaryExprAST : public ExprAST {
         : Opcode(Opcode), Operand(std::move(Operand)) {}
 
     llvm::Value *accept(ExprVisitor &visitor) override { return visitor.visit(*this); }
+    void accept(ConstExprVisitor &visitor) const override { visitor.visit(*this); }
 };
 
 class BinaryExprAST : public ExprAST {
     friend struct CodegenContext;
+    friend class SemanticAnalyzer;
     char Op;
     std::unique_ptr<ExprAST> LHS, RHS;
 
@@ -90,10 +112,12 @@ class BinaryExprAST : public ExprAST {
         : Op(Op), LHS(std::move(LHS)), RHS(std::move(RHS)) {}
 
     llvm::Value *accept(ExprVisitor &visitor) override { return visitor.visit(*this); }
+    void accept(ConstExprVisitor &visitor) const override { visitor.visit(*this); }
 };
 
 class CallExprAST : public ExprAST {
     friend struct CodegenContext;
+    friend class SemanticAnalyzer;
     std::string Callee;
     std::vector<std::unique_ptr<ExprAST>> Args;
 
@@ -102,10 +126,12 @@ class CallExprAST : public ExprAST {
         : Callee(Callee), Args(std::move(Args)) {}
 
     llvm::Value *accept(ExprVisitor &visitor) override { return visitor.visit(*this); }
+    void accept(ConstExprVisitor &visitor) const override { visitor.visit(*this); }
 };
 
 class IfExprAST : public ExprAST {
     friend struct CodegenContext;
+    friend class SemanticAnalyzer;
     std::unique_ptr<ExprAST> Cond, Then, Else;
 
   public:
@@ -114,10 +140,12 @@ class IfExprAST : public ExprAST {
         : Cond(std::move(Cond)), Then(std::move(Then)), Else(std::move(Else)) {}
 
     llvm::Value *accept(ExprVisitor &visitor) override { return visitor.visit(*this); }
+    void accept(ConstExprVisitor &visitor) const override { visitor.visit(*this); }
 };
 
 class ForExprAST : public ExprAST {
     friend struct CodegenContext;
+    friend class SemanticAnalyzer;
     std::string VarName;
     SourceLocation VariableLocation;
     std::unique_ptr<ExprAST> Start, End, Step, Body;
@@ -131,10 +159,12 @@ class ForExprAST : public ExprAST {
           Body(std::move(Body)) {}
 
     llvm::Value *accept(ExprVisitor &visitor) override { return visitor.visit(*this); }
+    void accept(ConstExprVisitor &visitor) const override { visitor.visit(*this); }
 };
 
 class VarExprAST : public ExprAST {
     friend struct CodegenContext;
+    friend class SemanticAnalyzer;
     std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames;
     std::vector<SourceLocation> VariableLocations;
     std::unique_ptr<ExprAST> Body;
@@ -148,10 +178,12 @@ class VarExprAST : public ExprAST {
         : VarNames(std::move(VarNames)), Body(std::move(Body)) {}
 
     llvm::Value *accept(ExprVisitor &visitor) override { return visitor.visit(*this); }
+    void accept(ConstExprVisitor &visitor) const override { visitor.visit(*this); }
 };
 
 class PrototypeAST {
     friend struct CodegenContext;
+    friend class SemanticAnalyzer;
     std::string Name;
     std::vector<std::string> Args;
     bool IsOperator;
@@ -181,6 +213,7 @@ class PrototypeAST {
 // A top-level mutable double definition, or a declaration supplied by another module.
 class GlobalAST {
     friend struct CodegenContext;
+    friend class SemanticAnalyzer;
     std::string Name;
     double Initializer;
     bool External;
@@ -198,6 +231,7 @@ class GlobalAST {
 
 class FunctionAST {
     friend struct CodegenContext;
+    friend class SemanticAnalyzer;
     std::unique_ptr<PrototypeAST> Proto;
     std::unique_ptr<ExprAST> Body;
 

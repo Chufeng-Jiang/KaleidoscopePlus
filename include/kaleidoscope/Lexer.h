@@ -1,12 +1,14 @@
 #pragma once
 #include "kaleidoscope/SourceLocation.h"
+#include "kaleidoscope/SourceManager.h"
 #include "kaleidoscope/Token.h"
 #include <istream>
 #include <string>
 namespace kaleidoscope {
 class Lexer {
   public:
-    explicit Lexer(std::istream &input) : Input(input) {}
+    explicit Lexer(std::istream &input, SourceManager *source = nullptr)
+        : Input(input), Source(source) {}
     int next();
     SourceLocation location() const { return TokenLocation; }
     const std::string &identifier() const { return IdentifierStr; }
@@ -14,6 +16,7 @@ class Lexer {
 
   private:
     std::istream &Input;
+    SourceManager *Source;
     int advance();
     int LastChar = ' ';
     SourceLocation NextLocation{1, 1};

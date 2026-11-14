@@ -7,7 +7,7 @@ Value *CodegenContext::getVariableStorage(const std::string &name) {
     auto local = NamedValues.find(name);
     if (local != NamedValues.end() && local->second)
         return local->second;
-    if (!Globals.count(name))
+    if (!GlobalNames.count(name))
         return nullptr;
     if (auto *global = TheModule->getNamedGlobal(name))
         return global;
@@ -17,16 +17,6 @@ Value *CodegenContext::getVariableStorage(const std::string &name) {
 }
 
 GlobalVariable *CodegenContext::generate(const GlobalAST &node) {
-    if (FunctionProtos.count(node.Name) || DefinedFunctions.count(node.Name) ||
-        TheModule->getFunction(node.Name)) {
-        Diag.error("Global name conflicts with a function", node.location());
-        return nullptr;
-    }
-    auto symbol = Globals.find(node.Name);
-    if (!node.External && symbol != Globals.end() && symbol->second.Defined) {
-        Diag.error("Global variable is already defined", node.location());
-        return nullptr;
-    }
     auto *global = TheModule->getNamedGlobal(node.Name);
     if (!global) {
         global = new GlobalVariable(*TheModule, Type::getDoubleTy(*TheContext), false,
@@ -37,8 +27,7 @@ GlobalVariable *CodegenContext::generate(const GlobalAST &node) {
         if (Debug)
             Debug->declareGlobal(*global, node.location());
     }
-    auto &state = Globals[node.Name];
-    state.Defined = state.Defined || !node.External;
+    GlobalNames.insert(node.Name);
     return global;
 }
 } // namespace kaleidoscope

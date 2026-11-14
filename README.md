@@ -5,13 +5,15 @@ A small LLVM-based compiler supporting interactive JIT execution and native obje
 ## Module Structure
 
 ```text
-include/kaleidoscope/  Public interfaces: Token, SourceLocation, Lexer, AST, Parser, Diagnostics, Driver
+include/kaleidoscope/  Public frontend interfaces and driver entry point
 src/
+  SourceManager.cpp   Cached source lines for file and REPL diagnostics
+  SemanticAnalyzer.cpp Names, signatures, scopes, and declaration validation
   Lexer.cpp           Input stream → tokens; each Lexer owns its cursor and token values
   Parser.cpp          Recursive descent and operator precedence parsing → AST
-  Diagnostics.cpp     Per-session errors with source file, line, and column
+  Diagnostics.cpp     Per-session errors, source excerpts, carets, and declaration notes
   CodegenContext.h    Internal backend state and AST visitor; not a public interface
-  Codegen.cpp         LLVM IR generation, symbol validation, and module initialization
+  Codegen.cpp         LLVM IR generation and module initialization
   Globals.cpp         Global storage, external declarations, and local-first variable lookup
   CompilerOptions.*  Command-line options and option compatibility checks
   Optimizer.*        LLVM default module optimization pipelines and IR verification
@@ -25,16 +27,18 @@ examples/             Kaleidoscope programs and their C++ drivers
 tests/                Frontend isolation tests and end-to-end regression tests
 ```
 
-`kaleidoscope_frontend` contains the lexer, parser, and diagnostics. It can be linked
-independently without LLVM headers or libraries. AST nodes own their children and
-are processed by the backend through the `ExprVisitor` interface, which only
-forward-declares `llvm::Value` and includes no LLVM implementation.
+`kaleidoscope_frontend` contains source management, the lexer, parser, semantic
+analysis, and diagnostics. It can be linked independently without LLVM headers or
+libraries. AST nodes own their children. `ConstExprVisitor` supports read-only
+frontend analysis; the backend uses `ExprVisitor`, which only forward-declares
+`llvm::Value` and includes no LLVM implementation.
 
-The backend owns the LLVM context, module, builder, symbol tables, and JIT in
+The backend owns the LLVM context, module, builder, lowering caches, and JIT in
 `CodegenContext`; optimization managers live within each optimizer invocation.
 There is no mutable file-scope global state.
 `Compiler` manages component lifetimes and explicitly shares the operator precedence
-table between the parser and backend to preserve custom operator semantics.
+table between the parser and semantic analyzer to preserve custom operator semantics.
+The semantic analyzer owns the language-level symbol table independently of LLVM.
 Runtime functions are compiled directly into the executable and exported for JIT lookup.
 
 ## Building
@@ -231,8 +235,8 @@ printf 'def twice(x) x*2; twice(21);\n' | ./build/kale -O3
 Functions and complete modules are verified before use, and modules are verified
 again after optimization. No fast-math flags are enabled. Repeated compatible
 `extern` declarations reuse a symbol; conflicting signatures, duplicate parameter
-names, and repeated definitions are rejected. Failed definitions restore operator
-precedence and leave previously accepted prototypes available to the REPL.
+names, and repeated definitions are rejected. Failed semantic checks leave operator
+precedence unchanged and previously accepted prototypes available to the REPL.
 
 File output is written to a temporary file next to the destination and renamed
 only after successful emission and close. Failed compilation leaves any previous
@@ -284,13 +288,57 @@ By default it generates an object file to link with a C++ driver. Combining
 Building the compiler itself with `CMAKE_BUILD_TYPE=Debug` is independent of this option.
 Run `./build/kale --help` for command-line usage. `compile.sh` remains unchanged.
 
-Lexer tokens and AST nodes retain one-based source lines and byte columns, with
-LF, CRLF, and CR line endings supported (a tab counts as one byte). Parser and
-code-generation errors include locations even without `-g`, for example:
+## Semantic Analysis and Diagnostics
+
+The compilation pipeline is:
 
 ```text
-examples/invalid.kale:2:3: Error: Unknown variable name
+Source -> Lexer -> Parser / AST -> SemanticAnalyzer -> LLVM IR -> Optimization -> JIT / Output
 ```
+
+Before generating IR, semantic analysis checks variable and function names, argument
+counts, duplicate parameters and definitions, conflicting declarations, assignment
+destinations, and lexical scopes. Functions can call themselves recursively;
+references to later functions require an earlier `extern` declaration. Parameters,
+`var` bindings, and loop variables follow the same shadowing rules in JIT and file mode.
+
+Symbols and custom binary-operator precedence are committed only after semantic
+analysis and IR generation succeed. An invalid definition does not reserve its name
+or replace an accepted declaration. Independent errors within a function body can
+be reported together. After a syntax error, the parser skips to a semicolon or the
+next `def`, `extern`, or `global` declaration; malformed input may still produce
+additional diagnostics before reaching a valid boundary.
+
+Lexer tokens and AST nodes retain one-based source lines and byte columns, with
+LF, CRLF, and CR line endings supported. Diagnostics include the source line and a
+caret even without `-g`. Tabs count as one byte in locations and expand to eight-column
+stops in excerpts. Declaration conflicts also show a note at the earlier declaration.
+
+Reproduce an error after building:
+
+```bash
+printf 'def broken(x)\n  x + missing;\n' > build/invalid.kale
+./build/kale build/invalid.kale -o build/invalid.o
+```
+
+Expected diagnostic (exit status 1; no new object is emitted):
+
+```text
+build/invalid.kale:2:7: Error: Unknown variable name 'missing'
+    x + missing;
+        ^
+```
+
+Source excerpts use a two-space display margin. Existing output files are preserved on failure. To verify that a failed definition
+does not prevent a later valid definition in the REPL:
+
+```bash
+printf 'def twice(x) missing; def twice(x) x*2; twice(21);\n' | ./build/kale
+```
+
+This reports the unknown variable and then evaluates the valid call to 42. The
+REPL retains its existing behavior of exiting with status 0 at EOF despite recoverable
+input errors; file compilation exits with status 1 when diagnostics contain errors.
 
 ## Validation and Maintenance
 
@@ -318,8 +366,12 @@ examples/invalid.kale:2:3: Error: Unknown variable name
 - `global_debugger` uses LLDB to inspect global values before and after assignment
   and distinguish a shadowing parameter from the global. It is enabled when LLDB
   and `llvm-dwarfdump` are available.
+- `semantic_analysis` links only the frontend and verifies name resolution, recursion,
+  signatures, scopes, custom operators, independent sessions, and symbol commits.
+- `diagnostics_recovery` checks multiple errors, source excerpts, tab-aligned carets,
+  declaration notes, line endings, EOF diagnostics, REPL recovery, and output preservation.
 - `.clang-format` standardizes C++ formatting. Add syntax in Token/Parser/AST,
-  implement new IR generation logic in the backend visitor, and keep command-line
+  add semantic rules in SemanticAnalyzer and IR generation in the backend visitor, and keep command-line
   workflows in Driver to avoid accumulating logic in main again.
 
 This refactoring preserves the existing language semantics and REPL output format.
