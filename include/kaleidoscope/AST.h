@@ -178,6 +178,24 @@ class PrototypeAST {
     unsigned getBinaryPrecedence() const { return Precedence; }
 };
 
+// A top-level mutable double definition, or a declaration supplied by another module.
+class GlobalAST {
+    friend struct CodegenContext;
+    std::string Name;
+    double Initializer;
+    bool External;
+    SourceLocation Location;
+
+  public:
+    GlobalAST(std::string name, double initializer, bool external)
+        : Name(std::move(name)), Initializer(initializer), External(external) {}
+    const std::string &getName() const { return Name; }
+    double initializer() const { return Initializer; }
+    bool isExternal() const { return External; }
+    SourceLocation location() const { return Location; }
+    void setLocation(SourceLocation location) { Location = location; }
+};
+
 class FunctionAST {
     friend struct CodegenContext;
     std::unique_ptr<PrototypeAST> Proto;

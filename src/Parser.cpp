@@ -1,4 +1,5 @@
 #include "kaleidoscope/Parser.h"
+#include <algorithm>
 #include <cctype>
 
 namespace kaleidoscope {
@@ -228,6 +229,8 @@ std::unique_ptr<ExprAST> Parser::ParsePrimary() {
     switch (CurTok) {
     default:
         return LogError("unkonwn token when expecting an expression");
+    case tok_invalid:
+        return LogError("Invalid numeric literal");
     case tok_identifier:
         return ParseIdentifierExpr();
     case tok_number:
@@ -347,6 +350,8 @@ std::unique_ptr<PrototypeAST> Parser::ParsePrototype() {
     std::vector<std::string> ArgNames;
     std::vector<SourceLocation> ArgLocations;
     while (getNextToken() == tok_identifier) {
+        if (std::find(ArgNames.begin(), ArgNames.end(), Lex.identifier()) != ArgNames.end())
+            return LogErrorP("Duplicate parameter name");
         ArgNames.push_back(Lex.identifier());
         ArgLocations.push_back(Lex.location());
     }
@@ -386,9 +391,47 @@ std::unique_ptr<FunctionAST> Parser::ParseTopLevelExpr() {
 }
 
 // external ::= 'extern' prototype
-std::unique_ptr<PrototypeAST> Parser::ParseExtern() {
-    getNextToken();
+std::unique_ptr<PrototypeAST> Parser::ParseExtern(bool keywordConsumed) {
+    if (!keywordConsumed)
+        getNextToken();
     return ParsePrototype();
+}
+
+// global ::= 'global' identifier ('=' ('+' | '-')? number)? ';'
+// external-global ::= 'extern' 'global' identifier ';'
+std::unique_ptr<GlobalAST> Parser::ParseGlobal(bool external) {
+    getNextToken(); // global
+    if (CurTok != tok_identifier) {
+        LogError("Expected name after global");
+        return nullptr;
+    }
+    auto loc = Lex.location();
+    std::string name = Lex.identifier();
+    getNextToken();
+    double initializer = 0.0;
+    if (CurTok == '=') {
+        if (external) {
+            LogError("extern global cannot have an initializer");
+            return nullptr;
+        }
+        getNextToken();
+        bool negative = CurTok == '-';
+        if (CurTok == '-' || CurTok == '+')
+            getNextToken();
+        if (CurTok != tok_number) {
+            LogError("Global initializer must be a numeric literal");
+            return nullptr;
+        }
+        initializer = negative ? -Lex.number() : Lex.number();
+        getNextToken();
+    }
+    if (CurTok != ';') {
+        LogError("Expected ';' after global declaration (initializer must be a numeric literal)");
+        return nullptr;
+    }
+    // Leave the semicolon for the driver, so interactive declarations do not
+    // wait for a token from the following line before taking effect.
+    return makeLocated<GlobalAST>(loc, name, initializer, external);
 }
 
 } // namespace kaleidoscope

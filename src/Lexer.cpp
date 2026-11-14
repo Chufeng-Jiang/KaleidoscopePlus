@@ -1,5 +1,6 @@
 #include "kaleidoscope/Lexer.h"
 #include <cctype>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 
@@ -62,6 +63,8 @@ int Lexer::next() {
             return tok_binary;
         if (IdentifierStr == "unary")
             return tok_unary;
+        if (IdentifierStr == "global")
+            return tok_global;
         if (IdentifierStr == "var")
             return tok_var;
 
@@ -77,7 +80,11 @@ int Lexer::next() {
             LastChar = advance();
         } while (isdigit(LastChar) || LastChar == '.');
 
-        NumVal = strtod(NumStr.c_str(), 0);
+        char *end = nullptr;
+        errno = 0;
+        NumVal = strtod(NumStr.c_str(), &end);
+        if (end == NumStr.c_str() || *end != '\0' || errno == ERANGE)
+            return tok_invalid;
         return tok_number;
     }
 

@@ -18,10 +18,12 @@ class DebugInfo {
     void restoreScopes(std::size_t depth) { Scopes.resize(depth); }
     void declareVariable(llvm::AllocaInst *storage, llvm::StringRef name, SourceLocation location,
                          llvm::BasicBlock *block, unsigned argument = 0);
+    void declareGlobal(llvm::GlobalVariable &variable, SourceLocation location);
     void finalize();
 
   private:
     llvm::DIBuilder Builder;
+    llvm::DICompileUnit *Unit;
     llvm::DIFile *File;
     llvm::DIType *DoubleType;
     std::vector<llvm::DILocalScope *> Scopes;

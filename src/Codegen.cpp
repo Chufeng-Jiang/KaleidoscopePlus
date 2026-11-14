@@ -5,12 +5,6 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Verifier.h"
-#include "llvm/Passes/PassBuilder.h"
-#include "llvm/Transforms/InstCombine/InstCombine.h"
-#include "llvm/Transforms/Scalar/GVN.h"
-#include "llvm/Transforms/Scalar/Reassociate.h"
-#include "llvm/Transforms/Scalar/SimplifyCFG.h"
-#include "llvm/Transforms/Utils/Mem2Reg.h"
 
 namespace kaleidoscope {
 
@@ -45,10 +39,10 @@ Value *CodegenContext::visit(NumberExprAST &node) {
 Value *CodegenContext::visit(VariableExprAST &node) {
     auto &ctx = *this;
     LocationGuard location(*this, node.location());
-    AllocaInst *A = ctx.NamedValues[node.Name];
+    Value *A = ctx.getVariableStorage(node.Name);
     if (!A)
         return ctx.LogErrorV("Unknown variable name");
-    return ctx.Builder->CreateLoad(A->getAllocatedType(), A, node.Name.c_str());
+    return ctx.Builder->CreateLoad(Type::getDoubleTy(*ctx.TheContext), A, node.Name.c_str());
 }
 
 Value *CodegenContext::visit(UnaryExprAST &node) {
@@ -77,7 +71,7 @@ Value *CodegenContext::visit(BinaryExprAST &node) {
         if (!Val)
             return nullptr;
 
-        Value *Variable = ctx.NamedValues[*LHSE];
+        Value *Variable = ctx.getVariableStorage(*LHSE);
         if (!Variable)
             return ctx.LogErrorV("Unknown variable name");
 
@@ -299,6 +293,22 @@ Value *CodegenContext::visit(VarExprAST &node) {
 
 Function *CodegenContext::generate(PrototypeAST &node) {
     auto &ctx = *this;
+    if (Globals.count(node.Name)) {
+        Diag.error("Function name conflicts with a global variable", node.location());
+        return nullptr;
+    }
+    auto previous = FunctionProtos.find(node.Name);
+    if (previous != FunctionProtos.end() && previous->second->Args.size() != node.Args.size()) {
+        Diag.error("Function signature does not match previous declaration", node.location());
+        return nullptr;
+    }
+    if (auto *existing = TheModule->getFunction(node.Name)) {
+        if (existing->arg_size() != node.Args.size()) {
+            Diag.error("Function signature does not match previous declaration", node.location());
+            return nullptr;
+        }
+        return existing;
+    }
     std::vector<Type *> Doubles(node.Args.size(), Type::getDoubleTy(*ctx.TheContext));
     FunctionType *FT = FunctionType::get(Type::getDoubleTy(*ctx.TheContext), Doubles, false);
     Function *F = Function::Create(FT, Function::ExternalLinkage, node.Name, ctx.TheModule.get());
@@ -313,8 +323,11 @@ Function *CodegenContext::generate(PrototypeAST &node) {
 Function *CodegenContext::generate(FunctionAST &node) {
     auto &ctx = *this;
     auto &P = *node.Proto;
-    ctx.FunctionProtos[node.Proto->getName()] = std::move(node.Proto);
-    Function *TheFunction = ctx.getFunction(P.getName());
+    if (P.getName() != "__anon_expr" && DefinedFunctions.count(P.getName())) {
+        Diag.error("Function is already defined", P.location());
+        return nullptr;
+    }
+    Function *TheFunction = generate(P);
 
     if (!TheFunction)
         return nullptr;
@@ -331,8 +344,26 @@ Function *CodegenContext::generate(FunctionAST &node) {
     for (auto &Arg : TheFunction->args())
         Arg.setName("");
 
-    if (P.isBinaryOp())
-        ctx.BinopPrecedence[P.getOperatorName()] = P.getBinaryPrecedence();
+    bool completed = false;
+    const auto previous =
+        P.isBinaryOp() ? BinopPrecedence.find(P.getOperatorName()) : BinopPrecedence.end();
+    const int oldPrecedence = previous == BinopPrecedence.end() ? -1 : previous->second;
+    const bool binary = P.isBinaryOp();
+    const char op = binary ? P.getOperatorName() : 0;
+    auto rollback = llvm::make_scope_exit([&] {
+        if (!completed) {
+            TheFunction->deleteBody();
+            TheFunction->setSubprogram(nullptr);
+            if (binary) {
+                if (oldPrecedence < 0)
+                    BinopPrecedence.erase(op);
+                else
+                    BinopPrecedence[op] = oldPrecedence;
+            }
+        }
+    });
+    if (binary)
+        BinopPrecedence[op] = P.getBinaryPrecedence();
 
     BasicBlock *BB = BasicBlock::Create(*ctx.TheContext, "entry", TheFunction);
     ctx.Builder->SetInsertPoint(BB);
@@ -370,27 +401,25 @@ Function *CodegenContext::generate(FunctionAST &node) {
             Debug->endFunction();
         if (verifyFunction(*TheFunction, &errs())) {
             Diag.error("Invalid generated function", P.location());
-            TheFunction->eraseFromParent();
             return nullptr;
         }
-        if (!EmitDebugInfo)
-            ctx.TheFPM->run(*TheFunction, *ctx.TheFAM);
 
+        completed = true;
+        if (P.getName() != "__anon_expr")
+            DefinedFunctions.insert(P.getName());
+        FunctionProtos[P.getName()] = std::move(node.Proto);
         return TheFunction;
     }
 
     if (Debug)
         Debug->endFunction();
-    TheFunction->eraseFromParent();
-    if (P.isBinaryOp())
-        ctx.BinopPrecedence.erase(P.getOperatorName());
     return nullptr;
 }
 
 void CodegenContext::initializeModule() {
     TheContext = std::make_unique<LLVMContext>();
     TheModule = std::make_unique<Module>("Kaleidoscope", *TheContext);
-    if (EmitObject) {
+    if (FileMode) {
         TheModule->setDataLayout(TheTM->createDataLayout());
         TheModule->setTargetTriple(TheTM->getTargetTriple());
     } else
@@ -398,26 +427,6 @@ void CodegenContext::initializeModule() {
     Builder = std::make_unique<IRBuilder<>>(*TheContext);
     if (EmitDebugInfo)
         Debug = std::make_unique<DebugInfo>(*TheModule, SourceFile);
-
-    TheFPM = std::make_unique<FunctionPassManager>();
-    TheLAM = std::make_unique<LoopAnalysisManager>();
-    TheFAM = std::make_unique<FunctionAnalysisManager>();
-    TheCGAM = std::make_unique<CGSCCAnalysisManager>();
-    TheMAM = std::make_unique<ModuleAnalysisManager>();
-    ThePIC = std::make_unique<PassInstrumentationCallbacks>();
-    TheSI = std::make_unique<StandardInstrumentations>(*TheContext, true);
-    TheSI->registerCallbacks(*ThePIC, TheMAM.get());
-
-    TheFPM->addPass(PromotePass()); // Mem2Reg
-    TheFPM->addPass(InstCombinePass());
-    TheFPM->addPass(ReassociatePass());
-    TheFPM->addPass(GVNPass());
-    TheFPM->addPass(SimplifyCFGPass());
-
-    PassBuilder PB;
-    PB.registerModuleAnalyses(*TheMAM);
-    PB.registerFunctionAnalyses(*TheFAM);
-    PB.crossRegisterProxies(*TheLAM, *TheFAM, *TheCGAM, *TheMAM);
 }
 
 } // namespace kaleidoscope

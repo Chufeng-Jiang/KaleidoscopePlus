@@ -34,7 +34,7 @@ KaleidoscopeJIT::~KaleidoscopeJIT() {
         ES->reportError(std::move(Err));
 }
 
-Expected<std::unique_ptr<KaleidoscopeJIT>> KaleidoscopeJIT::Create() {
+Expected<std::unique_ptr<KaleidoscopeJIT>> KaleidoscopeJIT::Create(CodeGenOptLevel level) {
     auto EPC = SelfExecutorProcessControl::Create();
     if (!EPC)
         return EPC.takeError();
@@ -43,6 +43,7 @@ Expected<std::unique_ptr<KaleidoscopeJIT>> KaleidoscopeJIT::Create() {
 
     JITTargetMachineBuilder JTMB(ES->getExecutorProcessControl().getTargetTriple());
 
+    JTMB.setCodeGenOptLevel(level);
     auto DL = JTMB.getDefaultDataLayoutForTarget();
     if (!DL)
         return DL.takeError();

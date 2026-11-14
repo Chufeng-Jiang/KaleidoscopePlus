@@ -1,10 +1,10 @@
 #include "kaleidoscope/Driver.h"
 #include "CodegenContext.h"
+#include "CompilerOptions.h"
+#include "Optimizer.h"
+#include "Output.h"
 #include "kaleidoscope/Parser.h"
-#include "llvm/IR/LegacyPassManager.h"
-#include "llvm/IR/Verifier.h"
 #include "llvm/MC/TargetRegistry.h"
-#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
@@ -31,6 +31,8 @@ class Compiler {
     CodegenContext Context;
     void HandleDefinition();
     void HandleExtern();
+    void HandleGlobal(bool external = false);
+    bool SubmitJITModule();
     void HandleTopLevelExpression();
     void MainLoop();
 };
@@ -38,26 +40,32 @@ class Compiler {
 void Compiler::HandleDefinition() {
     if (auto FnAST = Syntax.ParseDefinition()) {
         if (auto *FnIR = Context.generate(*FnAST)) {
-            fprintf(stderr, "Read function definition:");
-            FnIR->print(errs());
-            fprintf(stderr, "\n");
-
-            if (!Context.EmitObject) {
-                Context.ExitOnErr(Context.TheJIT->addModule(
-                    ThreadSafeModule(std::move(Context.TheModule), std::move(Context.TheContext))));
-                Context.initializeModule();
+            if (!Context.FileMode) {
+                fprintf(stderr, "Read function definition:");
+                FnIR->print(errs());
+                fprintf(stderr, "\n");
             }
+
+            if (!Context.FileMode)
+                SubmitJITModule();
         }
     } else
         Syntax.getNextToken();
 }
 
 void Compiler::HandleExtern() {
-    if (auto ProtoAST = Syntax.ParseExtern()) {
+    Syntax.getNextToken();
+    if (Syntax.currentToken() == tok_global) {
+        HandleGlobal(true);
+        return;
+    }
+    if (auto ProtoAST = Syntax.ParseExtern(true)) {
         if (auto *FnIR = Context.generate(*ProtoAST)) {
-            fprintf(stderr, "Read extern");
-            FnIR->print(errs());
-            fprintf(stderr, "\n");
+            if (!Context.FileMode) {
+                fprintf(stderr, "Read extern");
+                FnIR->print(errs());
+                fprintf(stderr, "\n");
+            }
 
             Context.FunctionProtos[ProtoAST->getName()] = std::move(ProtoAST);
         }
@@ -67,7 +75,11 @@ void Compiler::HandleExtern() {
 
 void Compiler::HandleTopLevelExpression() {
     if (auto FnAST = Syntax.ParseTopLevelExpr()) {
-        if (Context.generate(*FnAST) && !Context.EmitObject) {
+        if (Context.generate(*FnAST) && !Context.FileMode) {
+            if (!optimizeModule(*Context.TheModule, nullptr, Context.Optimization)) {
+                Diag.error("Invalid generated module");
+                return;
+            }
             auto RT = Context.TheJIT->getMainJITDylib().createResourceTracker();
             auto TSM =
                 ThreadSafeModule(std::move(Context.TheModule), std::move(Context.TheContext));
@@ -84,15 +96,47 @@ void Compiler::HandleTopLevelExpression() {
         Syntax.getNextToken();
 }
 
-// top ::= definition | external | expression | ';'
+bool Compiler::SubmitJITModule() {
+    if (!optimizeModule(*Context.TheModule, nullptr, Context.Optimization)) {
+        Diag.error("Invalid generated module");
+        return false;
+    }
+    Context.ExitOnErr(Context.TheJIT->addModule(
+        ThreadSafeModule(std::move(Context.TheModule), std::move(Context.TheContext))));
+    Context.initializeModule();
+    return true;
+}
+
+void Compiler::HandleGlobal(bool external) {
+    if (auto global = Syntax.ParseGlobal(external)) {
+        if (Context.generate(*global) && !Context.FileMode && !global->isExternal()) {
+            // Global definitions belong to the persistent JIT tracker, not a temporary expression.
+            SubmitJITModule();
+        }
+    } else {
+        // Do not execute the remaining tokens of an invalid initializer as REPL expressions.
+        while (Syntax.currentToken() != tok_eof && Syntax.currentToken() != ';' &&
+               Syntax.currentToken() != tok_def && Syntax.currentToken() != tok_extern &&
+               Syntax.currentToken() != tok_global)
+            Syntax.getNextToken();
+        if (Syntax.currentToken() == ';')
+            Syntax.getNextToken();
+    }
+}
+
+// top ::= definition | global | external | expression | ';'
 void Compiler::MainLoop() {
     while (true) {
-        fprintf(stderr, "ready> ");
+        if (!Context.FileMode)
+            fprintf(stderr, "ready> ");
         switch (Syntax.currentToken()) {
         case tok_eof:
             return;
         case ';':
             Syntax.getNextToken();
+            break;
+        case tok_global:
+            HandleGlobal();
             break;
         case tok_def:
             HandleDefinition();
@@ -112,32 +156,23 @@ int Compiler::run(int argc, char *argv[]) {
     InitializeNativeTargetAsmPrinter();
     InitializeNativeTargetAsmParser();
 
-    std::string InputFile;
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg == "-g")
-            Context.EmitDebugInfo = true;
-        else if (arg == "--help" || arg == "-h") {
-            outs() << "Usage: kale [-g] [source.kale]\n"
-                   << "No file: interactive JIT. -g: unoptimized object with DWARF (requires a "
-                      "file).\n";
-            return 0;
-        } else if (arg.empty() || arg[0] == '-' || !InputFile.empty()) {
-            errs() << "Usage: kale [-g] [source.kale]\n";
-            return 1;
-        } else
-            InputFile = arg;
-    }
-    if (Context.EmitDebugInfo && InputFile.empty()) {
-        errs() << "-g requires an input file; JIT source debugging is not supported\n";
+    CompilerOptions options;
+    if (!parseOptions(argc, argv, options, std::cerr)) {
+        printUsage(std::cerr);
         return 1;
     }
-    std::string OutputFile;
+    if (options.Help) {
+        printUsage(std::cout);
+        return 0;
+    }
+    Context.EmitDebugInfo = options.Debug;
+    Context.Optimization = options.Optimization;
+    const auto codegenLevel = static_cast<CodeGenOptLevel>(options.Optimization);
+    const auto &InputFile = options.InputFile;
     if (!InputFile.empty()) {
-        Context.EmitObject = true;
+        Context.FileMode = true;
         Context.SourceFile = InputFile;
         Diag.setSourceFile(InputFile);
-        OutputFile = InputFile + ".o";
         Input.open(InputFile);
         if (!Input) {
             errs() << "Could not open input file: " << InputFile;
@@ -155,21 +190,21 @@ int Compiler::run(int argc, char *argv[]) {
         }
 
         TargetOptions Opt;
-        Context.TheTM.reset(Target->createTargetMachine(
-            TargetTriple, "generic", "", Opt, Reloc::PIC_, std::nullopt,
-            Context.EmitDebugInfo ? CodeGenOptLevel::None : CodeGenOptLevel::Default));
+        Context.TheTM.reset(Target->createTargetMachine(TargetTriple, "generic", "", Opt,
+                                                        Reloc::PIC_, std::nullopt, codegenLevel));
     } else {
-        Context.TheJIT = Context.ExitOnErr(KaleidoscopeJIT::Create());
+        Context.TheJIT = Context.ExitOnErr(KaleidoscopeJIT::Create(codegenLevel));
     }
 
-    fprintf(stderr, "ready> ");
+    if (!Context.FileMode)
+        fprintf(stderr, "ready> ");
     Syntax.getNextToken();
 
     Context.initializeModule();
 
     MainLoop();
 
-    if (Context.EmitObject) {
+    if (Context.FileMode) {
         if (Context.Debug)
             Context.Debug->finalize();
         if (Diag.hasError()) {
@@ -177,25 +212,13 @@ int Compiler::run(int argc, char *argv[]) {
             return 1;
         }
 
-        if (verifyModule(*Context.TheModule, &errs())) {
+        if (!optimizeModule(*Context.TheModule, Context.TheTM.get(), Context.Optimization)) {
             errs() << "Invalid generated module\n";
             return 1;
         }
-        std::error_code EC;
-        raw_fd_ostream Dest(OutputFile, EC, sys::fs::OF_None);
-        if (EC) {
-            errs() << "Could not open output file: " << EC.message();
+        if (!emitOutput(*Context.TheModule, *Context.TheTM, options.EmitIR, options.InputFile,
+                        options.OutputFile))
             return 1;
-        }
-
-        legacy::PassManager Pass;
-        if (Context.TheTM->addPassesToEmitFile(Pass, Dest, nullptr, CodeGenFileType::ObjectFile)) {
-            errs() << "Could not emit object of this type";
-            return 1;
-        }
-
-        Pass.run(*Context.TheModule);
-        Dest.flush();
     }
 
     return 0;

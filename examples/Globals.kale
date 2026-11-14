@@ -1,0 +1,12 @@
+global counter = 10;
+global offset = -2;
+global untouched;
+def bump(delta)
+  counter = counter + delta;
+def localcounter(counter)
+  counter = counter + 100;
+def localvar()
+  var counter = 100 in counter + offset;
+def loopshadow()
+  for counter = 1, counter < 2 in counter;
+def readcounter() counter;

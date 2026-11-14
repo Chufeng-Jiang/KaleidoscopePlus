@@ -12,7 +12,9 @@ class Parser {
     int getNextToken();
     std::unique_ptr<FunctionAST> ParseDefinition();
     std::unique_ptr<FunctionAST> ParseTopLevelExpr();
-    std::unique_ptr<PrototypeAST> ParseExtern();
+    std::unique_ptr<PrototypeAST> ParseExtern(bool keywordConsumed = false);
+    // Called with the current token at 'global', including after 'extern'.
+    std::unique_ptr<GlobalAST> ParseGlobal(bool external = false);
 
   private:
     Lexer &Lex;

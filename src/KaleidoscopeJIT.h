@@ -48,7 +48,8 @@ class KaleidoscopeJIT {
     KaleidoscopeJIT(std::unique_ptr<ExecutionSession> ES, JITTargetMachineBuilder JTMB,
                     DataLayout DL);
     ~KaleidoscopeJIT();
-    static Expected<std::unique_ptr<KaleidoscopeJIT>> Create();
+    static Expected<std::unique_ptr<KaleidoscopeJIT>>
+    Create(CodeGenOptLevel level = CodeGenOptLevel::Default);
     const DataLayout &getDataLayout() const;
     JITDylib &getMainJITDylib();
     Error addModule(ThreadSafeModule TSM, ResourceTrackerSP RT = nullptr);

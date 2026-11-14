@@ -11,7 +11,8 @@ add_library(kaleidoscope_frontend src/Lexer.cpp src/Parser.cpp src/Diagnostics.c
 target_include_directories(kaleidoscope_frontend PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(kaleidoscope_frontend PUBLIC cxx_std_17)
 
-add_library(kaleidoscope_backend src/Codegen.cpp src/DebugInfo.cpp src/Driver.cpp src/KaleidoscopeJIT.cpp)
+add_library(kaleidoscope_backend src/Codegen.cpp src/DebugInfo.cpp src/Driver.cpp src/KaleidoscopeJIT.cpp
+    src/CompilerOptions.cpp src/Optimizer.cpp src/Output.cpp src/Globals.cpp)
 target_include_directories(kaleidoscope_backend SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
 separate_arguments(KALEIDOSCOPE_LLVM_DEFINITIONS NATIVE_COMMAND "${LLVM_DEFINITIONS}")
 target_compile_options(kaleidoscope_backend PRIVATE ${KALEIDOSCOPE_LLVM_DEFINITIONS})
@@ -52,5 +53,39 @@ if(BUILD_TESTING)
         endif()
     else()
         message(STATUS "llvm-dwarfdump not found: DWARF/debugger tests are unavailable")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    find_program(KALEIDOSCOPE_LLVM_AS NAMES llvm-as llvm-as-${LLVM_VERSION_MAJOR} HINTS ${LLVM_TOOLS_BINARY_DIR})
+    find_program(KALEIDOSCOPE_OPT NAMES opt opt-${LLVM_VERSION_MAJOR} HINTS ${LLVM_TOOLS_BINARY_DIR})
+    find_program(KALEIDOSCOPE_LLC NAMES llc llc-${LLVM_VERSION_MAJOR} HINTS ${LLVM_TOOLS_BINARY_DIR})
+    if(KALEIDOSCOPE_LLVM_AS AND KALEIDOSCOPE_OPT AND KALEIDOSCOPE_LLC)
+        add_test(NAME compiler_pipeline
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/compiler_pipeline_test.py
+                    $<TARGET_FILE:kale> ${CMAKE_CXX_COMPILER}
+                    ${KALEIDOSCOPE_LLVM_AS} ${KALEIDOSCOPE_OPT} ${KALEIDOSCOPE_LLC})
+    else()
+        message(STATUS "LLVM command-line tools missing: compiler_pipeline test is unavailable")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    set(KALEIDOSCOPE_GLOBAL_TEST_ARGS)
+    if(KALEIDOSCOPE_DWARFDUMP)
+        list(APPEND KALEIDOSCOPE_GLOBAL_TEST_ARGS --dwarf ${KALEIDOSCOPE_DWARFDUMP})
+    endif()
+    if(KALEIDOSCOPE_LLVM_AS)
+        list(APPEND KALEIDOSCOPE_GLOBAL_TEST_ARGS --llvm-as ${KALEIDOSCOPE_LLVM_AS})
+    endif()
+    add_test(NAME global_variables
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/globals_test.py
+                $<TARGET_FILE:kale> ${CMAKE_CXX_COMPILER} ${CMAKE_CURRENT_SOURCE_DIR}
+                ${KALEIDOSCOPE_GLOBAL_TEST_ARGS})
+    if(KALEIDOSCOPE_LLDB AND KALEIDOSCOPE_DWARFDUMP)
+        add_test(NAME global_debugger
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/globals_test.py
+                    $<TARGET_FILE:kale> ${CMAKE_CXX_COMPILER} ${CMAKE_CURRENT_SOURCE_DIR}
+                    --debugger-only --lldb ${KALEIDOSCOPE_LLDB} --dwarf ${KALEIDOSCOPE_DWARFDUMP})
     endif()
 endif()

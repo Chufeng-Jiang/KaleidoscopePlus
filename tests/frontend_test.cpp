@@ -68,5 +68,25 @@ int main() {
     require(!badParser.ParseExtern(), "reject invalid parameter");
     require(diagnostic.str().find("bad.kale:2:3: Error:") != std::string::npos,
             "positioned parser diagnostic");
+    std::istringstream globalInput("global counter = -2.5; extern global host;");
+    Lexer globalLexer(globalInput);
+    Diagnostics globalDiagnostics(diagnostic);
+    Parser globalParser(globalLexer, globalDiagnostics, ops2);
+    require(globalParser.getNextToken() == tok_global, "global keyword");
+    auto global = globalParser.ParseGlobal();
+    require(global && global->getName() == "counter" && global->initializer() == -2.5 &&
+                !global->isExternal() && global->location().Line == 1 &&
+                global->location().Column == 8,
+            "global AST and source location");
+    require(globalParser.currentToken() == ';', "global declaration terminator");
+    require(globalParser.getNextToken() == tok_extern, "external global prefix");
+    require(globalParser.getNextToken() == tok_global, "external global keyword");
+    auto external = globalParser.ParseGlobal(true);
+    require(external && external->isExternal() && external->getName() == "host",
+            "external global AST");
+    std::istringstream invalidNumbers(". 1.2.3");
+    Lexer invalidLexer(invalidNumbers);
+    require(invalidLexer.next() == tok_invalid && invalidLexer.next() == tok_invalid,
+            "reject malformed numeric literals");
     std::cout << "Independent frontend sessions passed\n";
 }

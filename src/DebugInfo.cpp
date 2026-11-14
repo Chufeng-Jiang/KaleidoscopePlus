@@ -12,7 +12,7 @@ DebugInfo::DebugInfo(Module &module, const std::string &sourceFile) : Builder(mo
     File = Builder.createFile(path.filename().string(), path.parent_path().string());
     module.addModuleFlag(Module::Warning, "Debug Info Version", DEBUG_METADATA_VERSION);
     module.addModuleFlag(Module::Warning, "Dwarf Version", 4);
-    Builder.createCompileUnit(dwarf::DW_LANG_C, File, "Kaleidoscope Compiler", false, "", 0);
+    Unit = Builder.createCompileUnit(dwarf::DW_LANG_C, File, "Kaleidoscope Compiler", false, "", 0);
     DoubleType = Builder.createBasicType("double", 64, dwarf::DW_ATE_float);
 }
 
@@ -56,6 +56,12 @@ void DebugInfo::declareVariable(AllocaInst *storage, StringRef name, SourceLocat
     Builder.insertDeclare(
         storage, variable, Builder.createExpression(),
         DILocation::get(File->getContext(), location.Line, location.Column, scope), block);
+}
+
+void DebugInfo::declareGlobal(GlobalVariable &variable, SourceLocation location) {
+    auto *expression = Builder.createGlobalVariableExpression(
+        Unit, variable.getName(), variable.getName(), File, location.Line, DoubleType, false, true);
+    variable.addDebugInfo(expression);
 }
 
 void DebugInfo::finalize() { Builder.finalize(); }
