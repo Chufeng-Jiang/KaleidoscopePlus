@@ -73,6 +73,7 @@ class NumberExprAST : public ExprAST {
     Type LiteralType;
 
   public:
+    double value() const { return Val; }
     NumberExprAST(double Val, Type type = Type::Double) : Val(Val), LiteralType(type) {}
 
     llvm::Value *accept(ExprVisitor &visitor) override { return visitor.visit(*this); }
@@ -100,6 +101,8 @@ class UnaryExprAST : public ExprAST {
     std::unique_ptr<ExprAST> Operand;
 
   public:
+    char opcode() const { return Opcode; }
+    const ExprAST &operand() const { return *Operand; }
     UnaryExprAST(char Opcode, std::unique_ptr<ExprAST> Operand)
         : Opcode(Opcode), Operand(std::move(Operand)) {}
 
@@ -114,6 +117,9 @@ class BinaryExprAST : public ExprAST {
     std::unique_ptr<ExprAST> LHS, RHS;
 
   public:
+    char opcode() const { return Op; }
+    const ExprAST &lhs() const { return *LHS; }
+    const ExprAST &rhs() const { return *RHS; }
     BinaryExprAST(char Op, std::unique_ptr<ExprAST> LHS, std::unique_ptr<ExprAST> RHS)
         : Op(Op), LHS(std::move(LHS)), RHS(std::move(RHS)) {}
 
@@ -128,6 +134,8 @@ class CallExprAST : public ExprAST {
     std::vector<std::unique_ptr<ExprAST>> Args;
 
   public:
+    const std::string &callee() const { return Callee; }
+    const auto &arguments() const { return Args; }
     CallExprAST(const std::string &Callee, std::vector<std::unique_ptr<ExprAST>> Args)
         : Callee(Callee), Args(std::move(Args)) {}
 
@@ -141,6 +149,9 @@ class IfExprAST : public ExprAST {
     std::unique_ptr<ExprAST> Cond, Then, Else;
 
   public:
+    const ExprAST &condition() const { return *Cond; }
+    const ExprAST &thenExpr() const { return *Then; }
+    const ExprAST &elseExpr() const { return *Else; }
     IfExprAST(std::unique_ptr<ExprAST> Cond, std::unique_ptr<ExprAST> Then,
               std::unique_ptr<ExprAST> Else)
         : Cond(std::move(Cond)), Then(std::move(Then)), Else(std::move(Else)) {}
@@ -158,6 +169,12 @@ class ForExprAST : public ExprAST {
     std::unique_ptr<ExprAST> Start, End, Step, Body;
 
   public:
+    const std::string &variable() const { return VarName; }
+    Type bindingType() const { return BindingType; }
+    const ExprAST &start() const { return *Start; }
+    const ExprAST &end() const { return *End; }
+    const ExprAST *step() const { return Step.get(); }
+    const ExprAST &body() const { return *Body; }
     void setBindingType(Type type) { BindingType = type; }
     void setVariableLocation(SourceLocation loc) { VariableLocation = loc; }
     ForExprAST(const std::string &VarName, std::unique_ptr<ExprAST> Start,
@@ -179,6 +196,9 @@ class VarExprAST : public ExprAST {
     std::unique_ptr<ExprAST> Body;
 
   public:
+    const auto &bindings() const { return VarNames; }
+    const auto &bindingTypes() const { return BindingTypes; }
+    const ExprAST &body() const { return *Body; }
     void setBindingTypes(std::vector<Type> types) { BindingTypes = std::move(types); }
     void setVariableLocations(std::vector<SourceLocation> locations) {
         VariableLocations = std::move(locations);
@@ -209,6 +229,7 @@ class PrototypeAST {
         : Name(Name), Args(std::move(Args)), IsOperator(IsOperator), Precedence(Prec),
           Signature{std::vector<Type>(this->Args.size(), Type::Double), Type::Double} {}
     const std::string &getName() const { return Name; }
+    const std::vector<std::string> &arguments() const { return Args; }
     const FunctionType &signature() const { return Signature; }
     void setSignature(FunctionType signature) { Signature = std::move(signature); }
     bool isUnaryOp() const { return IsOperator && Args.size() == 1; }
@@ -256,6 +277,7 @@ class FunctionAST {
     std::unique_ptr<ExprAST> Body;
 
   public:
+    const PrototypeAST &prototype() const { return *Proto; }
     const ExprAST &body() const { return *Body; }
     FunctionAST(std::unique_ptr<PrototypeAST> Proto, std::unique_ptr<ExprAST> Body)
         : Proto(std::move(Proto)), Body(std::move(Body)) {}

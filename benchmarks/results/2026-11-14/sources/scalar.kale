@@ -1,0 +1,4 @@
+def scalar(x y) (x+y)*(x-y);
+def integer(x: i32 y: i32): i32 (x+y)*(x-y);
+def predicate(x): bool bool(x);
+def loops(n: i32): i32 var s: i32=0i32, ignored=for i: i32=0i32, i<n in s=s+i in s;

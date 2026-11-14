@@ -1,0 +1,12 @@
+# The same element function is compiled to native code and to a PTX map kernel.
+def element(x y a) ((((((((x*a+y)*a+y)*a+y)*a+y)*a+y)*a+y)*a+y)*a+y);
+
+# Arrays are borrowed. store returns the value written.
+# The outer if is essential: legacy for executes its body at least once.
+# The loop condition observes i before the automatic increment.
+#acc parallel loop copyin(x,y) copyout(out)
+def vector(x: array y: array out: array a)
+  if 0i32 < size(x) then
+    for i: i32 = 0i32, i < size(x)-1i32 in
+      store(out, i, element(load(x,i),load(y,i),a))
+  else 0;

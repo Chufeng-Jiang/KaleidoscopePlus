@@ -1,0 +1,55 @@
+-- Could NOT find LibEdit (missing: LibEdit_INCLUDE_DIRS LibEdit_LIBRARIES) 
+-- Could NOT find zstd (missing: zstd_LIBRARY zstd_INCLUDE_DIR) 
+-- Could NOT find CURL (missing: CURL_LIBRARY CURL_INCLUDE_DIR) 
+-- Using LLVM 23.1.6 from /usr/lib/llvm-23/lib/cmake/llvm
+-- LLDB not found: debugger_integration test is unavailable
+-- Could NOT find LibEdit (missing: LibEdit_INCLUDE_DIRS LibEdit_LIBRARIES) 
+-- Could NOT find zstd (missing: zstd_LIBRARY zstd_INCLUDE_DIR) 
+-- Could NOT find CURL (missing: CURL_LIBRARY CURL_INCLUDE_DIR) 
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/chufeng/Desktop/AI Compiler/Kaleidoscope/build/mlir
+Consolidate compiler generated dependencies of target kale_device_runtime
+[ 50%] Built target kale_device_runtime
+[ 75%] Building CXX object benchmarks/CMakeFiles/kale-benchmark.dir/runner.cpp.o
+[100%] Linking CXX executable kale-benchmark
+[100%] Built target kale-benchmark
+Consolidate compiler generated dependencies of target kaleidoscope_frontend
+[ 20%] Built target KaleOpsIncGen
+[ 50%] Built target kaleidoscope_frontend
+Consolidate compiler generated dependencies of target kaleidoscope_mlir
+[ 90%] Built target kaleidoscope_mlir
+Consolidate compiler generated dependencies of target kale-mlir
+[100%] Built target kale-mlir
+[ 27%] Built target kaleidoscope_frontend
+Consolidate compiler generated dependencies of target kaleidoscope_backend
+[ 86%] Built target kaleidoscope_backend
+Consolidate compiler generated dependencies of target kale
+[100%] Built target kale
+length variant=1 n=0 passed
+length variant=1 n=1 passed
+length variant=1 n=17 passed
+length variant=1 n=257 passed
+length variant=1 n=4096 passed
+length variant=1 n=65536 passed
+length variant=1 n=262144 passed
+length variant=1 n=1048576 passed
+length variant=1 n=4194304 passed
+intensity variant=1 n=65536 passed
+intensity variant=1 n=1048576 passed
+intensity variant=8 n=65536 passed
+intensity variant=8 n=1048576 passed
+intensity variant=32 n=65536 passed
+intensity variant=32 n=1048576 passed
+intensity variant=128 n=65536 passed
+intensity variant=128 n=1048576 passed
+residency n=65536 K=1 passed
+residency n=65536 K=10 passed
+residency n=65536 K=100 passed
+residency n=1048576 K=1 passed
+residency n=1048576 K=10 passed
+residency n=1048576 K=100 passed
+Compiler size=10 finished
+Compiler size=100 finished
+Compiler size=500 finished
+Complete: /home/chufeng/Desktop/AI Compiler/Kaleidoscope/benchmarks/results/2026-11-14

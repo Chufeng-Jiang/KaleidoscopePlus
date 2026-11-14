@@ -31,9 +31,19 @@ int Lexer::next() {
             LastChar = advance();
         if (LastChar != '#')
             break;
-        do
+        auto commentLocation = CharLocation;
+        std::string comment;
+        LastChar = advance();
+        while (LastChar != EOF && LastChar != '\n' && LastChar != '\r') {
+            comment += static_cast<char>(LastChar);
             LastChar = advance();
-        while (LastChar != EOF && LastChar != '\n' && LastChar != '\r');
+        }
+        if (comment == "acc" || (comment.size() > 3 && comment.compare(0, 3, "acc") == 0 &&
+                                isspace(static_cast<unsigned char>(comment[3])))) {
+            TokenLocation = commentLocation;
+            IdentifierStr = comment.substr(3);
+            return tok_acc;
+        }
     }
 
     TokenLocation = CharLocation;
@@ -72,7 +82,7 @@ int Lexer::next() {
             return tok_true;
         if (IdentifierStr == "false")
             return tok_false;
-        if (IdentifierStr == "i32" || IdentifierStr == "bool" || IdentifierStr == "double")
+        if (IdentifierStr == "i32" || IdentifierStr == "bool" || IdentifierStr == "double" || IdentifierStr == "array")
             return tok_type;
         // identifier
         return tok_identifier;

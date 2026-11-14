@@ -25,7 +25,7 @@ Type Parser::ParseOptionalType() {
         return Type::Double;
     getNextToken();
     if (CurTok != tok_type) {
-        LogError("Expected type: double, i32, or bool");
+        LogError("Expected type: double, i32, bool, or array");
         return Type::Error;
     }
     auto type = namedType(Lex.identifier());

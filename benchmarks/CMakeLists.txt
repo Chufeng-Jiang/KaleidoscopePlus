@@ -1,0 +1,8 @@
+if(NOT KALEIDOSCOPE_ENABLE_MLIR OR NOT KALEIDOSCOPE_ENABLE_CUDA)
+    message(FATAL_ERROR "Full benchmark suite requires MLIR and CUDA")
+endif()
+add_executable(kale-benchmark runner.cpp)
+target_link_libraries(kale-benchmark PRIVATE kale_device_runtime ${CMAKE_DL_LIBS})
+target_compile_features(kale-benchmark PRIVATE cxx_std_17)
+target_compile_options(kale-benchmark PRIVATE -O2 -ffp-contract=off)
+set_target_properties(kale-benchmark PROPERTIES ENABLE_EXPORTS ON)

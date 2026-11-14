@@ -7,13 +7,18 @@ void SemanticAnalyzer::previous(const Symbol &symbol) {
 bool SemanticAnalyzer::checkPrototype(const PrototypeAST &prototype, bool definition,
                                       bool temporary) {
     auto count = Diag.errorCount();
+    if (ArraysEnabled && (prototype.getName() == "load" || prototype.getName() == "store" ||
+                          prototype.getName() == "size")) {
+        Diag.error("Array intrinsic name is reserved", prototype.location());
+        return false;
+    }
     if (prototype.signature().Parameters.size() != prototype.Args.size() ||
         !isValueType(prototype.signature().Result)) {
         Diag.error("Invalid function type", prototype.location());
         return false;
     }
     for (auto type : prototype.signature().Parameters)
-        if (!isValueType(type)) {
+        if (!isValueType(type) && !(ArraysEnabled && type == Type::ArrayDouble)) {
             Diag.error("Invalid parameter type", prototype.location());
             return false;
         }
@@ -53,6 +58,10 @@ bool SemanticAnalyzer::analyze(const PrototypeAST &prototype) {
     return checkPrototype(prototype, false);
 }
 bool SemanticAnalyzer::analyze(const GlobalAST &global) {
+    if (global.type() == Type::ArrayDouble) {
+        Diag.error("Arrays are supported only as borrowed function parameters", global.location());
+        return false;
+    }
     bool valid =
         requireType(global.InitializerType, global.type(), global.location(), "Global initializer");
     valid = checkLiteral(global.Initializer, global.InitializerType, global.location()) && valid;
@@ -165,12 +174,31 @@ bool SemanticAnalyzer::checkLiteral(double value, Type type, SourceLocation loca
 }
 Type SemanticAnalyzer::checkCall(const std::string &name, const std::vector<Type> &arguments,
                                  SourceLocation location) {
+    if (ArraysEnabled && (name == "load" || name == "store" || name == "size")) {
+        std::vector<Type> expected{Type::ArrayDouble};
+        if (name != "size") expected.push_back(Type::I32);
+        if (name == "store") expected.push_back(Type::Double);
+        if (arguments.size() != expected.size()) {
+            Diag.error("Incorrect array intrinsic argument count", location);
+            return Type::Error;
+        }
+        bool valid = true;
+        for (size_t i = 0; i < expected.size(); ++i)
+            valid = requireType(arguments[i], expected[i], location, "Array intrinsic argument") && valid;
+        return valid ? (name == "size" ? Type::I32 : Type::Double) : Type::Error;
+    }
     auto conversion = namedType(name);
+    if (conversion == Type::ArrayDouble) {
+        Diag.error("array is a borrowed parameter type, not a conversion", location);
+        return Type::Error;
+    }
     if (conversion != Type::Unknown) {
         if (arguments.size() != 1) {
             Diag.error("Conversion requires exactly one argument", location);
             return Type::Error;
         }
+        if (!isValueType(arguments[0]) && arguments[0] != Type::Error)
+            Diag.error("Conversion requires a scalar argument", location);
         return isValueType(arguments[0]) ? conversion : Type::Error;
     }
     FunctionType signature;
@@ -222,6 +250,10 @@ void SemanticAnalyzer::visit(const BinaryExprAST &node) {
     auto left = infer(*node.LHS);
     auto right = infer(*node.RHS);
     if (node.Op == '=') {
+        if (left == Type::ArrayDouble) {
+            Diag.error("Array parameters cannot be reassigned; use store", node.location());
+            return;
+        }
         if (!node.LHS->variableName()) {
             Diag.error("destination of '=' must be a variable", node.LHS->location());
             return;
@@ -281,6 +313,10 @@ void SemanticAnalyzer::visit(const VarExprAST &node) {
     for (std::size_t i = 0; i < node.VarNames.size(); ++i) {
         const auto &binding = node.VarNames[i];
         auto declared = node.BindingTypes[i];
+        if (declared == Type::ArrayDouble) {
+            Diag.error("Arrays are supported only as borrowed function parameters", node.location());
+            valid = false;
+        }
         auto type = binding.second ? infer(*binding.second) : declared;
         if (binding.second)
             valid =

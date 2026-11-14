@@ -31,7 +31,8 @@ enum Token {
     tok_integer = -16,
     tok_true = -17,
     tok_false = -18,
-    tok_type = -19
+    tok_type = -19,
+    tok_acc = -20
 };
 
 } // namespace kaleidoscope

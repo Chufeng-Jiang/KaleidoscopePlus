@@ -1,0 +1,49 @@
+Internal ctest changing into directory: /home/chufeng/Desktop/AI Compiler/Kaleidoscope/build/mlir
+Test project /home/chufeng/Desktop/AI Compiler/Kaleidoscope/build/mlir
+      Start  1: frontend_sessions
+ 1/20 Test  #1: frontend_sessions ................   Passed    0.00 sec
+      Start  2: compiler_regression
+ 2/20 Test  #2: compiler_regression ..............   Passed    1.05 sec
+      Start  3: compiler_debug_regression
+ 3/20 Test  #3: compiler_debug_regression ........   Passed    0.83 sec
+      Start  4: debug_info
+ 4/20 Test  #4: debug_info .......................   Passed    0.96 sec
+      Start  5: compiler_pipeline
+ 5/20 Test  #5: compiler_pipeline ................   Passed    3.02 sec
+      Start  6: global_variables
+ 6/20 Test  #6: global_variables .................   Passed    3.64 sec
+      Start  7: semantic_analysis
+ 7/20 Test  #7: semantic_analysis ................   Passed    0.00 sec
+      Start  8: diagnostics_recovery
+ 8/20 Test  #8: diagnostics_recovery .............   Passed    0.17 sec
+      Start  9: type_analysis
+ 9/20 Test  #9: type_analysis ....................   Passed    0.00 sec
+      Start 10: typed_language
+10/20 Test #10: typed_language ...................   Passed    3.61 sec
+      Start 11: mlir_execution
+11/20 Test #11: mlir_execution ...................   Passed    1.60 sec
+      Start 12: mlir_missing_pattern
+12/20 Test #12: mlir_missing_pattern .............   Passed    0.01 sec
+      Start 13: mlir_conversion
+13/20 Test #13: mlir_conversion ..................   Passed    0.17 sec
+      Start 14: device_runtime_cpu
+14/20 Test #14: device_runtime_cpu ...............   Passed    0.01 sec
+      Start 15: vector_cpu
+15/20 Test #15: vector_cpu .......................   Passed    0.01 sec
+      Start 16: vector_cuda
+16/20 Test #16: vector_cuda ......................   Passed    0.40 sec
+      Start 17: device_runtime_cuda
+17/20 Test #17: device_runtime_cuda ..............   Passed    0.25 sec
+      Start 18: acc_directives
+18/20 Test #18: acc_directives ...................   Passed    0.30 sec
+      Start 19: acc_cpu
+19/20 Test #19: acc_cpu ..........................   Passed    0.01 sec
+      Start 20: acc_cuda
+20/20 Test #20: acc_cuda .........................   Passed    0.36 sec
+
+100% tests passed, 0 tests failed out of 20
+
+Label Time Summary:
+gpu    =   1.02 sec*proc (3 tests)
+
+Total Test time (real) =  16.41 sec

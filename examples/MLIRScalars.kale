@@ -1,0 +1,6 @@
+# Small, intentionally pure subset for the MLIR exercise.
+def twice(x) x*2;
+def polynomial(x y) (x+y)*(x-y);
+def add(a: i32 b: i32): i32 a+b;
+def truth(): bool true;
+def identity(flag: bool): bool flag;

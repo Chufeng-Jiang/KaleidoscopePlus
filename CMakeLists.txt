@@ -136,3 +136,18 @@ if(BUILD_TESTING)
                     --debugger-only --lldb ${KALEIDOSCOPE_LLDB} --dwarf ${KALEIDOSCOPE_DWARFDUMP})
     endif()
 endif()
+
+# The original LLVM backend remains buildable without MLIR.
+option(KALEIDOSCOPE_ENABLE_MLIR "Build the scalar MLIR dialect conversion exercise" OFF)
+if(KALEIDOSCOPE_ENABLE_MLIR)
+    # MLIRConfig also loads LLVM: require an exact match before importing targets.
+    find_package(MLIR ${LLVM_PACKAGE_VERSION} EXACT REQUIRED CONFIG)
+    add_subdirectory(src/backend/mlir)
+endif()
+
+add_subdirectory(src/runtime)
+
+option(KALEIDOSCOPE_BUILD_BENCHMARKS "Build reproducible CPU/CUDA benchmark harness" OFF)
+if(KALEIDOSCOPE_BUILD_BENCHMARKS)
+    add_subdirectory(benchmarks)
+endif()

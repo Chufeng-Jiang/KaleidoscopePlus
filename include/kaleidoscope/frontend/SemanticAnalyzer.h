@@ -8,8 +8,8 @@ namespace kaleidoscope {
 // The authoritative language-level namespace. Contains no LLVM objects.
 class SemanticAnalyzer : private ConstExprVisitor {
   public:
-    SemanticAnalyzer(Diagnostics &diagnostics, OperatorTable &operators)
-        : Diag(diagnostics), Operators(operators) {}
+    SemanticAnalyzer(Diagnostics &diagnostics, OperatorTable &operators, bool arrays = false)
+        : Diag(diagnostics), Operators(operators), ArraysEnabled(arrays) {}
     bool analyze(const PrototypeAST &prototype);
     bool analyze(const GlobalAST &global);
     bool analyze(const FunctionAST &function, bool temporary = false);
@@ -19,6 +19,7 @@ class SemanticAnalyzer : private ConstExprVisitor {
     void commit(const FunctionAST &function, bool temporary = false);
 
   private:
+    bool ArraysEnabled;
     enum class Kind { Function, Global };
     struct Symbol {
         Kind Category;
